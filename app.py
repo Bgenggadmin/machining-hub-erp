@@ -155,4 +155,31 @@ with tab_log:
 
 # --- TAB 5: MASTERS ---
 with tab_masters:
-    st.info("Update Master lists through your Supabase Dashboard Tables.")
+    st.subheader("🛠️ Master Data Management")
+    
+    # Simple Access Control for Masters
+    master_pin = st.text_input("Enter Admin Pin to View Masters", type="password", key="master_pin")
+    
+    if master_pin == "1234": # Same PIN as Incharge, or keep it unique
+        st.success("Admin Access Granted")
+        
+        col_m1, col_m2 = st.columns(2)
+        
+        with col_m1:
+            st.write("### 🏗️ Machines")
+            st.dataframe(machine_list, column_config={"value": "Machine Name"}, use_container_width=True)
+            
+            st.write("### 👥 Operators")
+            st.dataframe(operator_list, column_config={"value": "Operator Name"}, use_container_width=True)
+            
+        with col_m2:
+            st.write("### 🚚 Vendors")
+            st.dataframe(vendor_list, column_config={"value": "Vendor Name"}, use_container_width=True)
+            
+            st.write("### 🚛 Vehicles")
+            st.dataframe(vehicle_list, column_config={"value": "Vehicle Number"}, use_container_width=True)
+            
+        st.divider()
+        st.info("💡 **How to add new items:** To add a new Machine, Operator, or Vendor, log into your Supabase Dashboard, open the respective 'master' table, and add a new row. The app will update automatically on refresh.")
+    else:
+        st.warning("Please enter Admin Pin to manage Master lists.")
