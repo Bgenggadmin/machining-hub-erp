@@ -150,6 +150,38 @@ with tab_analytics:
 
     else:
         st.info("No data found in the Logbook.")
+        # --- ADD THIS TO THE BOTTOM OF TAB 3 (ANALYTICS) ---
+st.divider()
+st.subheader("📥 Export Reports")
+
+if all_data:
+    # Prepare the final report dataframe
+    report_df = pd.DataFrame(all_data)
+    
+    # Clean up column names for the Excel sheet
+    report_df = report_df.rename(columns={
+        'job_code': 'Job Code',
+        'part_name': 'Part Name',
+        'status': 'Current Status',
+        'priority': 'Priority',
+        'vendor_id': 'Vendor',
+        'gatepass_no': 'Gatepass No'
+    })
+
+    # Function to convert DF to Excel bytes
+    import io
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        report_df.to_excel(writer, index=False, sheet_name='Production_Report')
+    
+    st.download_button(
+        label="📂 Download Full Production Report (Excel)",
+        data=buffer.getvalue(),
+        file_name=f"BG_Machining_Report_{datetime.date.today()}.xlsx",
+        mime="application/vnd.ms-excel"
+    )
+else:
+    st.write("No data available to export.")
 
 # --- TAB 4: LOGBOOK ---
 with tab_log:
