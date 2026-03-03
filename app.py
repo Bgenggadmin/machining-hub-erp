@@ -156,30 +156,47 @@ with tab_log:
 # --- TAB 5: MASTERS ---
 with tab_masters:
     st.subheader("🛠️ Master Data Management")
-    
-    # Simple Access Control for Masters
-    master_pin = st.text_input("Enter Admin Pin to View Masters", type="password", key="master_pin")
-    
-    if master_pin == "1234": # Same PIN as Incharge, or keep it unique
-        st.success("Admin Access Granted")
+    admin_pin = st.text_input("Enter Admin Pin", type="password", key="admin_m")
+
+    if admin_pin == "1234":
+        st.success("Access Granted")
         
-        col_m1, col_m2 = st.columns(2)
+        # --- QUICK ADD SECTION ---
+        st.write("### ➕ Quick Add New Entry")
+        c1, c2, c3 = st.columns([2, 2, 1])
         
-        with col_m1:
-            st.write("### 🏗️ Machines")
-            st.dataframe(machine_list, column_config={"value": "Machine Name"}, use_container_width=True)
-            
-            st.write("### 👥 Operators")
-            st.dataframe(operator_list, column_config={"value": "Operator Name"}, use_container_width=True)
-            
-        with col_m2:
-            st.write("### 🚚 Vendors")
-            st.dataframe(vendor_list, column_config={"value": "Vendor Name"}, use_container_width=True)
-            
-            st.write("### 🚛 Vehicles")
-            st.dataframe(vehicle_list, column_config={"value": "Vehicle Number"}, use_container_width=True)
-            
+        category = c1.selectbox("Select Category", ["machine_master", "operator_master", "vendor_master", "vehicle_master"])
+        
+        # Map category to the specific column name in your Supabase table
+        col_name_map = {
+            "machine_master": "machine_name",
+            "operator_master": "operator_name",
+            "vendor_master": "vendor_name",
+            "vehicle_master": "vehicle_number"
+        }
+        
+        new_val = c2.text_input(f"Enter New {category.split('_')[0].capitalize()}")
+        
+        if c3.button("Add to Master"):
+            if new_val:
+                target_col = col_name_map[category]
+                conn.table(category).insert({target_col: new_val}).execute()
+                st.success(f"Added {new_val} to {category}!")
+                st.rerun()
+        
         st.divider()
-        st.info("💡 **How to add new items:** To add a new Machine, Operator, or Vendor, log into your Supabase Dashboard, open the respective 'master' table, and add a new row. The app will update automatically on refresh.")
+        
+        # --- VIEW CURRENT LISTS ---
+        st.write("### 📜 Current Master Lists")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.write("**Machines**")
+        m1.write(machine_list)
+        m2.write("**Operators**")
+        m2.write(operator_list)
+        m3.write("**Vendors**")
+        m3.write(vendor_list)
+        m4.write("**Vehicles**")
+        m4.write(vehicle_list)
+        
     else:
-        st.warning("Please enter Admin Pin to manage Master lists.")
+        st.warning("Locked. Please enter PIN.")
