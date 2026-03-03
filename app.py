@@ -95,7 +95,6 @@ with tab_incharge:
                         conn.table("machining_logs").update({"status":"Finished","delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                         st.rerun()
 
-# --- TAB 3: ANALYTICS & ACTION LISTS ---
 # --- TAB 3: ANALYTICS & ACTION LISTS (WITH AGING) ---
 with tab_analytics:
     st.subheader("📊 Executive Action Center")
