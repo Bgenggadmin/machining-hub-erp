@@ -124,12 +124,25 @@ with tab_analytics:
         
         st.divider()
         st.subheader("📥 Export Reports")
+        
+        # Create a copy for the report so we don't mess up the live display
+        export_df = df.copy()
+        
+        # 🚨 FIX: Remove timezone info from all datetime columns
+        for col in export_df.columns:
+            if pd.api.types.is_datetime64_any_dtype(export_df[col]):
+                export_df[col] = export_df[col].dt.tz_localize(None)
+
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Sheet1')
-        st.download_button(label="📂 Download Full Excel Report", data=buffer.getvalue(), file_name="Production_Report.xlsx", mime="application/vnd.ms-excel")
-    else:
-        st.info("No data available.")
+            export_df.to_excel(writer, index=False, sheet_name='Production_Report')
+        
+        st.download_button(
+            label="📂 Download Full Excel Report", 
+            data=buffer.getvalue(), 
+            file_name=f"BG_Report_{datetime.date.today()}.xlsx", 
+            mime="application/vnd.ms-excel"
+        )
 
 # --- TAB 4: LOGBOOK ---
 with tab_log:
