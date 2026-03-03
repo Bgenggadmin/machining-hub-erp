@@ -56,12 +56,54 @@ with tab_log:
             st.rerun()
 
 with tab_outsource:
-    st.subheader("Send for Outsourcing")
-    # Show only jobs marked for outsourcing or needing a decision
-    st.info("Here the Incharge will enter Gatepass and Vehicle details.")
-    # Example field for logic check
-    gp_no = st.text_input("Enter Gatepass No")
-    v_no = st.selectbox("Select Vehicle", vehicle_list)
+    st.subheader("🚛 Incharge Dispatch & Decision Desk")
+    
+    # 1. Pull only 'Pending' jobs that need a decision
+    pending_jobs = conn.table("machining_logs").select("*").eq("status", "Pending").execute().data
+    
+    if not pending_jobs:
+        st.info("No pending requests from the production units.")
+    else:
+        st.write(f"Showing {len(pending_jobs)} jobs awaiting decision:")
+        for job in pending_jobs:
+            # Expander for each job to keep the screen organized
+            with st.expander(f"📌 Job: {job['job_code']} | Part: {job['part_name']} | Due: {job['required_date']}"):
+                
+                # Decision: In-House or Outsource?
+                choice = st.radio("Decision", ["In-House", "Outsource"], key=f"dec_{job['id']}")
+                
+                if choice == "In-House":
+                    c1, c2 = st.columns(2)
+                    m_sel = c1.selectbox("Machine", machine_list, key=f"m_{job['id']}")
+                    o_sel = c2.selectbox("Operator", operator_list, key=f"o_{job['id']}")
+                    
+                    if st.button("Start In-House", key=f"btn_in_{job['id']}"):
+                        conn.table("machining_logs").update({
+                            "status": "In-House",
+                            "machine_id": m_sel,
+                            "operator_id": o_sel
+                        }).eq("id", job['id']).execute()
+                        st.success("Job assigned to machine shop!")
+                        st.rerun()
+                        
+                else: # Outsource Path
+                    c1, c2, c3 = st.columns(3)
+                    v_sel = c1.selectbox("Vendor", vendor_list, key=f"v_{job['id']}")
+                    gp_val = c2.text_input("Gatepass No.", key=f"gp_{job['id']}")
+                    vh_sel = c3.selectbox("Vehicle", vehicle_list, key=f"vh_{job['id']}")
+                    
+                    if st.button("Dispatch Outward", key=f"btn_out_{job['id']}"):
+                        if gp_val: # Force Gatepass entry
+                            conn.table("machining_logs").update({
+                                "status": "Outsourced",
+                                "vendor_id": v_sel,
+                                "gatepass_no": gp_val,
+                                "vehicle_no": vh_sel
+                            }).eq("id", job['id']).execute()
+                            st.success(f"Job dispatched to {v_sel}")
+                            st.rerun()
+                        else:
+                            st.error("Please enter Gatepass No. before dispatching.")
 
 with tab_masters:
     st.subheader("🛠️ Update Machine & Personnel Masters")
