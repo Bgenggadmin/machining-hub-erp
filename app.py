@@ -96,41 +96,55 @@ with tab_incharge:
                         st.rerun()
 
 # --- TAB 3: ANALYTICS & ACTION LISTS ---
+# --- TAB 3: ANALYTICS & ACTION LISTS (WITH AGING) ---
 with tab_analytics:
     st.subheader("📊 Executive Action Center")
     
     if all_data:
+        import datetime
         df = pd.DataFrame(all_data)
         
-        # 1. THE RED FLAG LIST (URGENT & HIGH PRIORITY)
+        # Convert created_at to a readable date format
+        df['created_at'] = pd.to_datetime(df['created_at'])
+        today = pd.Timestamp.now(tz='UTC')
+        
+        # Calculate Aging (Days since request)
+        df['Days Idle'] = (today - df['created_at']).dt.days
+        
+        # 1. THE RED FLAG LIST
         st.error("### 🚨 Urgent & High Priority Action List")
         urgent_df = df[df['priority'].isin(['URGENT', 'High']) & (df['status'] != 'Finished')]
         if not urgent_df.empty:
-            st.dataframe(urgent_df[['job_code', 'part_name', 'priority', 'status', 'required_date', 'delay_reason']], 
+            # Sort by highest aging first
+            st.dataframe(urgent_df[['job_code', 'part_name', 'priority', 'Days Idle', 'status', 'delay_reason']], 
                          use_container_width=True, hide_index=True)
         else:
-            st.success("No urgent bottlenecks at the moment!")
+            st.success("No urgent bottlenecks!")
 
         st.divider()
 
-        # 2. VENDOR TRACKING (WHAT IS WHERE?)
+        # 2. VENDOR TRACKING
         st.warning("### 🚚 Vendor Outsourcing Tracker")
         vendor_df = df[df['status'] == 'Outsourced']
         if not vendor_df.empty:
-            # Grouping to see load per vendor
-            st.write("Current Inventory at External Vendors:")
-            st.dataframe(vendor_df[['job_code', 'part_name', 'vendor_id', 'gatepass_no', 'required_date']], 
+            st.dataframe(vendor_df[['job_code', 'part_name', 'vendor_id', 'Days Idle', 'gatepass_no']], 
                          use_container_width=True, hide_index=True)
         else:
-            st.info("No material is currently outside the factory.")
+            st.info("No material is currently outside.")
 
         st.divider()
 
-        # 3. PENDING APPROVAL (INCHARGE QUEUE)
+        # 3. PENDING APPROVAL (WITH AGING)
         st.info("### ⏳ Jobs Awaiting Allotment (Pending)")
         pending_df = df[df['status'] == 'Pending']
         if not pending_df.empty:
-            st.dataframe(pending_df[['job_code', 'part_name', 'activity_type', 'required_date', 'priority']], 
+            # We highlight jobs pending for more than 2 days
+            def highlight_aging(val):
+                color = 'red' if val > 2 else 'black'
+                return f'color: {color}'
+
+            st.write("Jobs marked in red have been pending for more than 2 days.")
+            st.dataframe(pending_df[['job_code', 'part_name', 'Days Idle', 'priority']].style.applymap(highlight_aging, subset=['Days Idle']),
                          use_container_width=True, hide_index=True)
         else:
             st.write("Incharge has cleared all requests!")
