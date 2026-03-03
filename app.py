@@ -40,7 +40,6 @@ tab_log, tab_outsource, tab_masters = st.tabs(["📋 Activity Log", "🚚 Outsou
 with tab_log:
     st.subheader("📋 Book New Machining Activity")
     with st.form("entry_form", clear_on_submit=True):
-        # We create 2 columns INSIDE the form for a clean 3x2 grid
         row1_col1, row1_col2 = st.columns(2)
         row2_col1, row2_col2 = st.columns(2)
         row3_col1, row3_col2 = st.columns(2)
@@ -58,10 +57,8 @@ with tab_log:
         with row3_col1:
             req_date = st.date_input("Required Delivery Date")
         with row3_col2:
-            # We add a 'Select' option so the user is forced to pick an operator
             op = st.selectbox("Assign Initial Operator", ["-- Select Operator --"] + operator_list)
 
-        # Submit button at the bottom center
         submit = st.form_submit_button("🚀 Save to Supabase")
 
         if submit:
@@ -111,26 +108,38 @@ with tab_outsource:
                             st.error("Gatepass No. is mandatory.")
 
 with tab_masters:
-    st.subheader("🛠️ Update Machine & Personnel Masters")
+    st.subheader("🛠️ Manage Master Data")
     
-    # Machinery Editor
-    st.write("### Machinery List")
+    # 1. Machinery Editor
+    st.write("### 🏗️ Machinery List")
     m_data = conn.table("machine_master").select("*").execute().data
     edited_m = st.data_editor(m_data, num_rows="dynamic", key="m_edit", use_container_width=True)
     
-    # Operator Editor
-    st.write("### Operator List")
+    # 2. Operator Editor
+    st.write("### 👨‍🔧 Operator List")
     o_data = conn.table("operator_master").select("*").execute().data
     edited_o = st.data_editor(o_data, num_rows="dynamic", key="o_edit", use_container_width=True)
 
-    if st.button("Save Changes to Masters"):
+    # 3. Vendor Editor (ADDED)
+    st.write("### 🏢 Vendor List")
+    v_data = conn.table("vendor_master").select("*").execute().data
+    edited_v = st.data_editor(v_data, num_rows="dynamic", key="v_edit", use_container_width=True)
+
+    # 4. Vehicle Editor (ADDED)
+    st.write("### 🚛 Vehicle List")
+    vh_data = conn.table("vehicle_master").select("*").execute().data
+    edited_vh = st.data_editor(vh_data, num_rows="dynamic", key="vh_edit", use_container_width=True)
+
+    if st.button("Save All Changes to Masters"):
         try:
             if edited_m: conn.table("machine_master").upsert(edited_m).execute()
             if edited_o: conn.table("operator_master").upsert(edited_o).execute()
-            st.success("Masters updated!")
+            if edited_v: conn.table("vendor_master").upsert(edited_v).execute()
+            if edited_vh: conn.table("vehicle_master").upsert(edited_vh).execute()
+            st.success("✅ All Masters updated successfully!")
             st.rerun()
         except Exception as e:
-            st.error(f"Error updating masters: {e}")
+            st.error(f"❌ Error updating masters: {e}")
 
 # 5. Live Data View
 st.divider()
