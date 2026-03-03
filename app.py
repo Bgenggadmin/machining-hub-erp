@@ -64,10 +64,23 @@ with tab_outsource:
     v_no = st.selectbox("Select Vehicle", vehicle_list)
 
 with tab_masters:
-    st.subheader("Dynamic Master Management")
-    st.write("Edit your Machines, Operators, and Vendors below.")
-    # This is where the 'Data Editor' would go to add fields dynamically
-    st.data_editor(machine_list, num_rows="dynamic", key="machine_editor")
+    st.subheader("🛠️ Update Machine & Personnel Masters")
+    
+    # 1. Machine Editor
+    st.write("### Machinery List")
+    existing_machines = conn.table("machine_master").select("*").execute().data
+    edited_machines = st.data_editor(existing_machines, num_rows="dynamic", key="m_edit")
+    
+    # 2. Operator Editor
+    st.write("### Operator List")
+    existing_ops = conn.table("operator_master").select("*").execute().data
+    edited_ops = st.data_editor(existing_ops, num_rows="dynamic", key="o_edit")
+    
+    if st.button("Save Changes to Masters"):
+        # This pushes any new rows or edits back to Supabase
+        conn.table("machine_master").upsert(edited_machines).execute()
+        conn.table("operator_master").upsert(edited_ops).execute()
+        st.success("Masters updated! Refresh the page to see changes in dropdowns.")
 
 # 5. Live Data View (The Logbook)
 st.divider()
