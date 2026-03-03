@@ -95,25 +95,48 @@ with tab_incharge:
                         conn.table("machining_logs").update({"status":"Finished","delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                         st.rerun()
 
-# --- TAB 3: FOUNDER ANALYTICS ---
+# --- TAB 3: ANALYTICS & ACTION LISTS ---
 with tab_analytics:
-    st.subheader("📊 Executive Dashboard")
+    st.subheader("📊 Executive Action Center")
+    
     if all_data:
         df = pd.DataFrame(all_data)
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Jobs", len(df))
-        col2.metric("Pending Approval", len(df[df['status'] == 'Pending']))
-        col3.metric("At Vendors", len(df[df['status'] == 'Outsourced']))
-        col4.metric("Finished", len(df[df['status'] == 'Finished']))
         
+        # 1. THE RED FLAG LIST (URGENT & HIGH PRIORITY)
+        st.error("### 🚨 Urgent & High Priority Action List")
+        urgent_df = df[df['priority'].isin(['URGENT', 'High']) & (df['status'] != 'Finished')]
+        if not urgent_df.empty:
+            st.dataframe(urgent_df[['job_code', 'part_name', 'priority', 'status', 'required_date', 'delay_reason']], 
+                         use_container_width=True, hide_index=True)
+        else:
+            st.success("No urgent bottlenecks at the moment!")
+
         st.divider()
-        c_left, c_right = st.columns(2)
-        with c_left:
-            fig_pie = px.pie(df, names='status', title="Current Shop Status Mix", hole=0.4)
-            st.plotly_chart(fig_pie, use_container_width=True)
-        with c_right:
-            fig_bar = px.histogram(df, x="priority", color="status", title="Jobs by Priority & Status")
-            st.plotly_chart(fig_bar, use_container_width=True)
+
+        # 2. VENDOR TRACKING (WHAT IS WHERE?)
+        st.warning("### 🚚 Vendor Outsourcing Tracker")
+        vendor_df = df[df['status'] == 'Outsourced']
+        if not vendor_df.empty:
+            # Grouping to see load per vendor
+            st.write("Current Inventory at External Vendors:")
+            st.dataframe(vendor_df[['job_code', 'part_name', 'vendor_id', 'gatepass_no', 'required_date']], 
+                         use_container_width=True, hide_index=True)
+        else:
+            st.info("No material is currently outside the factory.")
+
+        st.divider()
+
+        # 3. PENDING APPROVAL (INCHARGE QUEUE)
+        st.info("### ⏳ Jobs Awaiting Allotment (Pending)")
+        pending_df = df[df['status'] == 'Pending']
+        if not pending_df.empty:
+            st.dataframe(pending_df[['job_code', 'part_name', 'activity_type', 'required_date', 'priority']], 
+                         use_container_width=True, hide_index=True)
+        else:
+            st.write("Incharge has cleared all requests!")
+
+    else:
+        st.info("No data found in the Logbook.")
 
 # --- TAB 4: LOGBOOK ---
 with tab_log:
