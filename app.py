@@ -38,30 +38,47 @@ except:
 tab_log, tab_outsource, tab_masters = st.tabs(["📋 Activity Log", "🚚 Outsourcing & Gatepass", "🛠️ Manage Masters"])
 
 with tab_log:
-    st.subheader("Book New Machining Activity")
+    st.subheader("📋 Book New Machining Activity")
     with st.form("entry_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            u_no = st.selectbox("Unit No", [1, 2, 3])
-            j_code = st.text_input("Job Code (e.g. B&G-2026-01)")
-            part = st.text_input("Part Name")
-        with col2:
-            act = st.selectbox("Activity", ["Turning", "Drilling", "Milling", "Keyway", "Dishbending"])
-            req_date = st.date_input("Required Delivery Date")
-            op = st.selectbox("Assign Initial Operator", ["Not Assigned"] + operator_list)
+        # We create 2 columns INSIDE the form for a clean 3x2 grid
+        row1_col1, row1_col2 = st.columns(2)
+        row2_col1, row2_col2 = st.columns(2)
+        row3_col1, row3_col2 = st.columns(2)
 
-        if st.form_submit_button("Save to Supabase"):
-            if j_code and part:
+        with row1_col1:
+            u_no = st.selectbox("Unit No", [1, 2, 3])
+        with row1_col2:
+            j_code = st.text_input("Job Code", placeholder="e.g. BG-2026-001")
+            
+        with row2_col1:
+            part = st.text_input("Part Name", placeholder="e.g. Shaft-Pinion")
+        with row2_col2:
+            act = st.selectbox("Activity", ["Turning", "Drilling", "Milling", "Keyway", "Dishbending"])
+            
+        with row3_col1:
+            req_date = st.date_input("Required Delivery Date")
+        with row3_col2:
+            # We add a 'Select' option so the user is forced to pick an operator
+            op = st.selectbox("Assign Initial Operator", ["-- Select Operator --"] + operator_list)
+
+        # Submit button at the bottom center
+        submit = st.form_submit_button("🚀 Save to Supabase")
+
+        if submit:
+            if j_code and part and op != "-- Select Operator --":
                 conn.table("machining_logs").insert({
-                    "unit_no": u_no, "job_code": j_code, "part_name": part,
-                    "activity_type": act, "required_date": str(req_date),
-                    "operator_id": op if op != "Not Assigned" else None, 
+                    "unit_no": u_no, 
+                    "job_code": j_code, 
+                    "part_name": part,
+                    "activity_type": act, 
+                    "required_date": str(req_date),
+                    "operator_id": op, 
                     "status": "Pending"
                 }).execute()
-                st.success("Entry Saved Successfully!")
+                st.success(f"✅ Job {j_code} registered successfully!")
                 st.rerun()
             else:
-                st.error("Please fill in Job Code and Part Name.")
+                st.error("⚠️ Please fill all fields and select an Operator.")
 
 with tab_outsource:
     st.subheader("🚛 Incharge Dispatch & Decision Desk")
