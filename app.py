@@ -24,11 +24,11 @@ def get_master_data():
 
 machine_list, operator_list, vendor_list, vehicle_list = get_master_data()
 
-# Fetch live logs
+# Fetch all logs for use in all tabs
 all_logs_query = conn.table("machining_logs").select("*").order("created_at", desc=True).execute()
 all_data = all_logs_query.data or []
 
-# 3. Define Tabs
+# 3. Tabs Configuration
 tab_prod, tab_incharge, tab_analytics, tab_log, tab_masters = st.tabs([
     "📝 Request & Live Status", "👨‍💻 Incharge Desk", "📊 Executive Analytics", "📋 Full Logbook", "🛠️ Masters"
 ])
@@ -45,14 +45,14 @@ with tab_prod:
         req_date = c3.date_input("Required Date")
         priority = c3.selectbox("Priority", ["Low", "Medium", "High", "URGENT"])
         
-        if st.form_submit_button("Submit Request"):
+        if st.form_submit_button("Send to Incharge"):
             if j_code and part:
                 conn.table("machining_logs").insert({
                     "unit_no": u_no, "job_code": j_code, "part_name": part,
                     "activity_type": act, "required_date": str(req_date), 
                     "priority": priority, "status": "Pending"
                 }).execute()
-                st.success(f"Job {j_code} added to queue!")
+                st.success(f"Request {j_code} sent successfully!")
                 st.rerun()
 
     st.divider()
@@ -60,8 +60,9 @@ with tab_prod:
     unit_sel = st.radio("Select Unit to View Status", [1, 2, 3], horizontal=True)
     if all_data:
         df_status = pd.DataFrame(all_data)
-        unit_df = df_status[df_status['unit_no'] == unit_sel].head(10)
-        st.dataframe(unit_df[['job_code', 'part_name', 'status', 'priority', 'required_date']], use_container_width=True, hide_index=True)
+        unit_view = df_status[df_status['unit_no'] == unit_sel].head(15)
+        st.dataframe(unit_view[['job_code', 'part_name', 'status', 'priority', 'required_date']], 
+                     use_container_width=True, hide_index=True)
 
 # --- TAB 2: INCHARGE DECISION (PIN PROTECTED) ---
 with tab_incharge:
@@ -70,15 +71,16 @@ with tab_incharge:
     
     if auth_code == "1234": # Change this PIN as needed
         active_jobs = [j for j in all_data if j['status'] != "Finished"]
+        
         if not active_jobs:
-            st.info("All jobs completed!")
+            st.info("No active jobs pending allocation.")
         else:
             for job in active_jobs:
                 p_color = {"URGENT": "🔴", "High": "🟠", "Medium": "🟡", "Low": "⚪"}.get(job['priority'], "⚪")
                 with st.expander(f"{p_color} {job['priority']} | Unit {job['unit_no']} | Job: {job['job_code']}"):
                     c_del, c_int = st.columns(2)
-                    d_reason = c_del.text_input("Delay Reason", value=job.get('delay_reason',''), key=f"d_{job['id']}")
-                    i_note = c_int.text_area("Intervention Note", value=job.get('intervention_note',''), key=f"i_{job['id']}")
+                    d_reason = c_del.text_input("Delay Reason", value=job.get('delay_reason','') or '', key=f"d_{job['id']}")
+                    i_note = c_int.text_area("Intervention Note", value=job.get('intervention_note','') or '', key=f"i_{job['id']}")
                     
                     if job['status'] == "Pending":
                         mode = st.radio("Mode", ["In-House", "Outsource"], key=f"m_{job['id']}", horizontal=True)
@@ -98,16 +100,16 @@ with tab_incharge:
                                 conn.table("machining_logs").update({"status":"Outsourced","vendor_id":v,"vehicle_no":vh,"gatepass_no":gp,"delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                                 st.rerun()
                     elif job['status'] == "Outsourced":
-                        wb = st.text_input("Waybill No", key=f"wb_{job['id']}")
+                        wb = st.text_input("Waybill No (on return)", key=f"wb_{job['id']}")
                         if st.button("Receive & Finish", key=f"b3_{job['id']}"):
                             conn.table("machining_logs").update({"status":"Finished","waybill_no":wb,"delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                             st.rerun()
                     elif job['status'] == "In-House":
-                        if st.button("Mark Work Completed", key=f"b4_{job['id']}"):
+                        if st.button("Work Completed", key=f"b4_{job['id']}"):
                             conn.table("machining_logs").update({"status":"Finished","delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                             st.rerun()
     else:
-        st.warning("Please enter the Incharge Pin to manage jobs.")
+        st.warning("Please enter the Incharge Pin to manage and update jobs.")
 
 # --- TAB 3: EXECUTIVE ANALYTICS ---
 with tab_analytics:
@@ -115,40 +117,42 @@ with tab_analytics:
     if all_data:
         df = pd.DataFrame(all_data)
         df['created_at'] = pd.to_datetime(df['created_at'])
-        df['Days Idle'] = (pd.Timestamp.now(tz='UTC') - df['created_at']).dt.days
+        today = pd.Timestamp.now(tz='UTC')
+        df['Days Idle'] = (today - df['created_at']).dt.days
         
-        # Action Tables
-        st.error("### 🚨 High Priority Bottlenecks")
+        # 1. Action Tables
+        st.error("### 🚨 Urgent & High Priority Action List")
         urgent_df = df[df['priority'].isin(['URGENT', 'High']) & (df['status'] != 'Finished')]
-        st.dataframe(urgent_df[['job_code', 'part_name', 'Days Idle', 'status', 'delay_reason']], use_container_width=True, hide_index=True)
+        st.dataframe(urgent_df[['job_code', 'part_name', 'priority', 'Days Idle', 'status', 'delay_reason']], use_container_width=True, hide_index=True)
         
+        st.divider()
+        st.warning("### 🚚 Vendor Tracker")
+        vendor_df = df[df['status'] == 'Outsourced']
+        st.dataframe(vendor_df[['job_code', 'part_name', 'vendor_id', 'Days Idle', 'gatepass_no']], use_container_width=True, hide_index=True)
+
         st.divider()
         st.subheader("📥 Export Reports")
         
-        # Create a copy for the report so we don't mess up the live display
-        export_df = df.copy()
-        
-        # 🚨 FIX: Remove timezone info from all datetime columns
-        for col in export_df.columns:
-            if pd.api.types.is_datetime64_any_dtype(export_df[col]):
-                export_df[col] = export_df[col].dt.tz_localize(None)
+        # FIX for Excel Export: Remove Timezones
+        report_df = df.copy()
+        for col in report_df.columns:
+            if pd.api.types.is_datetime64_any_dtype(report_df[col]):
+                report_df[col] = report_df[col].dt.tz_localize(None)
 
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            export_df.to_excel(writer, index=False, sheet_name='Production_Report')
+            report_df.to_excel(writer, index=False, sheet_name='Production_Report')
         
-        st.download_button(
-            label="📂 Download Full Excel Report", 
-            data=buffer.getvalue(), 
-            file_name=f"BG_Report_{datetime.date.today()}.xlsx", 
-            mime="application/vnd.ms-excel"
-        )
+        st.download_button(label="📂 Download Full Excel Report", data=buffer.getvalue(), 
+                           file_name=f"BG_Report_{datetime.date.today()}.xlsx", mime="application/vnd.ms-excel")
+    else:
+        st.info("No data found to analyze.")
 
 # --- TAB 4: LOGBOOK ---
 with tab_log:
-    st.subheader("📋 Complete History")
+    st.subheader("📋 Full Production Log")
     st.dataframe(all_data, use_container_width=True)
 
 # --- TAB 5: MASTERS ---
 with tab_masters:
-    st.info("Master Data Management is currently done via Supabase Dashboard.")
+    st.info("Update Master lists through your Supabase Dashboard Tables.")
