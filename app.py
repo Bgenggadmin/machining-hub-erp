@@ -45,57 +45,84 @@ with tab_prod:
                 st.success("Request logged! Awaiting Incharge decision.")
                 st.rerun()
 
-# --- TAB 2: INCHARGE DECISION BOARD ---
+# --- TAB 2: INCHARGE DECISION BOARD (UPDATED) ---
 with tab_incharge:
-    st.subheader("🎯 Allocation & Inward Tracking")
+    st.subheader("🎯 Allocation, Dispatch & Intervention")
     
-    # Filter for jobs that are NOT Finished
+    # Fetch jobs that are NOT Finished
     active_jobs = conn.table("machining_logs").select("*").neq("status", "Finished").execute().data
     
     if not active_jobs:
-        st.info("No active jobs in the system.")
+        st.info("No active jobs requiring intervention.")
     else:
         for job in active_jobs:
-            status_color = "🔴" if job['status'] == "Pending" else "🟡"
-            with st.expander(f"{status_color} Job: {job['job_code']} | Status: {job['status']}"):
+            # Color code: Red for Pending, Yellow for In-Progress
+            status_emoji = "🔴" if job['status'] == "Pending" else "🟡"
+            
+            with st.expander(f"{status_emoji} Job: {job['job_code']} | Part: {job['part_name']}"):
                 
-                # PATH A: JOB IS PENDING (Decide In-House or Outsource)
+                # --- NEW: INTERVENTION & DELAY SECTION ---
+                st.markdown("##### ⚠️ Status & Intervention Note")
+                c_delay, c_inter = st.columns(2)
+                delay_reason = c_delay.text_input("Delay Reason (if any)", value=job.get('delay_reason', ''), key=f"del_{job['id']}")
+                intervention = c_inter.text_area("Intervention / Specific Note", value=job.get('intervention_note', ''), key=f"int_{job['id']}")
+                
+                st.divider()
+
+                # --- DECISION LOGIC ---
                 if job['status'] == "Pending":
-                    mode = st.radio("Decision", ["In-House", "Outsource"], key=f"dec_{job['id']}", horizontal=True)
+                    mode = st.radio("Allotment Mode", ["In-House", "Outsource"], key=f"mode_{job['id']}", horizontal=True)
                     
                     if mode == "In-House":
-                        c1, c2 = st.columns(2)
-                        m_sel = c1.selectbox("Allot Machine", machine_list, key=f"m_{job['id']}")
-                        o_sel = c2.selectbox("Allot Operator", operator_list, key=f"o_{job['id']}")
-                        if st.button("Start In-House", key=f"bin_{job['id']}"):
-                            conn.table("machining_logs").update({"status": "In-House", "machine_id": m_sel, "operator_id": o_sel}).eq("id", job['id']).execute()
+                        col1, col2 = st.columns(2)
+                        m_sel = col1.selectbox("Machine", machine_list, key=f"m_{job['id']}")
+                        o_sel = col2.selectbox("Operator", operator_list, key=f"o_{job['id']}")
+                        if st.button("Confirm In-House & Update Notes", key=f"bin_{job['id']}"):
+                            conn.table("machining_logs").update({
+                                "status": "In-House", 
+                                "machine_id": m_sel, 
+                                "operator_id": o_sel,
+                                "delay_reason": delay_reason,
+                                "intervention_note": intervention
+                            }).eq("id", job['id']).execute()
                             st.rerun()
                     
                     else: # Outsource Logic
-                        c1, c2 = st.columns(2)
-                        v_sel = c1.selectbox("Select Vendor", vendor_list, key=f"v_{job['id']}")
-                        vh_sel = c1.selectbox("Select Vehicle", vehicle_list, key=f"vh_{job['id']}")
-                        gp_no = c2.text_input("Gate Pass No", key=f"gp_{job['id']}")
-                        if st.button("Dispatch to Vendor", key=f"bout_{job['id']}"):
-                            conn.table("machining_logs").update({"status": "Outsourced", "vendor_id": v_sel, "vehicle_no": vh_sel, "gatepass_no": gp_no}).eq("id", job['id']).execute()
+                        col1, col2 = st.columns(2)
+                        v_sel = col1.selectbox("Vendor", vendor_list, key=f"v_{job['id']}")
+                        vh_sel = col1.selectbox("Vehicle", vehicle_list, key=f"vh_{job['id']}")
+                        gp_no = col2.text_input("Gate Pass No", key=f"gp_{job['id']}")
+                        if st.button("Dispatch & Update Notes", key=f"bout_{job['id']}"):
+                            conn.table("machining_logs").update({
+                                "status": "Outsourced", 
+                                "vendor_id": v_sel, 
+                                "vehicle_no": vh_sel, 
+                                "gatepass_no": gp_no,
+                                "delay_reason": delay_reason,
+                                "intervention_note": intervention
+                            }).eq("id", job['id']).execute()
                             st.rerun()
 
-                # PATH B: JOB IS OUTSOURCED (Update Waybill when it comes back)
+                # --- IN-PROGRESS UPDATES (INWARD TRACKING) ---
                 elif job['status'] == "Outsourced":
-                    st.warning(f"Material is at Vendor: {job.get('vendor_id')}")
-                    wb_no = st.text_input("Enter Waybill / DC No (On Return)", key=f"wb_{job['id']}")
-                    if st.button("Mark as Received & Finished", key=f"fin_{job['id']}"):
-                        if wb_no:
-                            conn.table("machining_logs").update({"status": "Finished", "waybill_no": wb_no}).eq("id", job['id']).execute()
-                            st.success("Job marked as Finished!")
-                            st.rerun()
-                        else:
-                            st.error("Please enter Waybill No to close the job.")
+                    st.info(f"Currently at Vendor: {job.get('vendor_id')}")
+                    wb_no = st.text_input("Waybill / DC No (On Return)", key=f"wb_{job['id']}")
+                    if st.button("Receive & Close Job", key=f"fin_{job['id']}"):
+                        conn.table("machining_logs").update({
+                            "status": "Finished", 
+                            "waybill_no": wb_no,
+                            "delay_reason": delay_reason,
+                            "intervention_note": intervention
+                        }).eq("id", job['id']).execute()
+                        st.rerun()
 
-                # PATH C: JOB IS IN-HOUSE (Close it)
                 elif job['status'] == "In-House":
-                    if st.button("Mark Work Completed", key=f"comp_{job['id']}"):
-                        conn.table("machining_logs").update({"status": "Finished"}).eq("id", job['id']).execute()
+                    if st.button("Complete Work & Close", key=f"comp_{job['id']}"):
+                        conn.table("machining_logs").update({
+                            "status": "Finished",
+                            "delay_reason": delay_reason,
+                            "intervention_note": intervention
+                        }).eq("id", job['id']).execute()
                         st.rerun()
 
 # --- TAB 3: LOGBOOK (THE REPOSITORY) ---
