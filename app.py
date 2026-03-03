@@ -94,6 +94,15 @@ with tab_incharge:
                     if st.button("Work Completed", key=f"b4_{job['id']}"):
                         conn.table("machining_logs").update({"status":"Finished","delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                         st.rerun()
+                        with tab_incharge:
+    # A simple password to prevent accidental edits by the wrong team
+    auth_code = st.text_input("Enter Incharge Pin to unlock actions", type="password")
+    
+    if auth_code == "1234": # You can change this to your desired pin
+        st.success("Access Granted")
+        # ... (Existing Incharge Code)
+    else:
+        st.warning("Please enter the Incharge Pin to manage jobs.")
 
 # --- TAB 3: ANALYTICS & ACTION LISTS (WITH AGING) ---
 with tab_analytics:
