@@ -5,7 +5,7 @@ from st_supabase_connection import SupabaseConnection
 conn = st.connection("supabase", type=SupabaseConnection)
 
 st.set_page_config(page_title="B&G Machining Hub", layout="wide")
-st.title("⚙️ Machining Unit: Production & Incharge Portal")
+st.title("⚙️ Machining Unit: Master Control")
 
 # 2. Fetch Master Data
 def get_master_data():
@@ -20,123 +20,87 @@ def get_master_data():
 
 machine_list, operator_list, vendor_list, vehicle_list = get_master_data()
 
-# 3. Main Interface Tabs
-tab_prod, tab_incharge, tab_logbook, tab_masters = st.tabs([
-    "📝 Production Request", "👨‍💻 Incharge Decision Board", "📊 Live Logbook", "🛠️ Manage Masters"
+# 3. Tabs
+tab_prod, tab_incharge, tab_log, tab_masters = st.tabs([
+    "📝 Production Request", "👨‍💻 Incharge Decision", "📊 Live Logbook", "🛠️ Manage Masters"
 ])
 
-# --- TAB 1: PRODUCTION TEAM (BOOKING) ---
+# --- TAB 1: PRODUCTION REQUEST (WITH PRIORITY) ---
 with tab_prod:
-    st.subheader("📋 Book New Machining Activity")
+    st.subheader("📋 New Machining Request")
     with st.form("prod_form", clear_on_submit=True):
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         u_no = c1.selectbox("Unit No", [1, 2, 3])
-        j_code = c1.text_input("Job Code", placeholder="e.g. BG-2026-001")
+        j_code = c1.text_input("Job Code")
         part = c2.text_input("Part Name")
         act = c2.selectbox("Activity", ["Turning", "Drilling", "Milling", "Keyway", "Dishbending"])
-        req_date = st.date_input("Required Delivery Date")
+        req_date = c3.date_input("Required Date")
+        priority = c3.selectbox("Priority", ["Low", "Medium", "High", "URGENT"])
         
         if st.form_submit_button("Send to Incharge"):
             if j_code and part:
                 conn.table("machining_logs").insert({
                     "unit_no": u_no, "job_code": j_code, "part_name": part,
-                    "activity_type": act, "required_date": str(req_date), "status": "Pending"
+                    "activity_type": act, "required_date": str(req_date), 
+                    "priority": priority, "status": "Pending"
                 }).execute()
-                st.success("Request logged! Awaiting Incharge decision.")
+                st.success(f"Request {j_code} sent with {priority} priority!")
                 st.rerun()
 
-# --- TAB 2: INCHARGE DECISION BOARD (UPDATED) ---
+# --- TAB 2: INCHARGE DECISION (WITH INTERVENTION) ---
 with tab_incharge:
-    st.subheader("🎯 Allocation, Dispatch & Intervention")
-    
-    # Fetch jobs that are NOT Finished
-    active_jobs = conn.table("machining_logs").select("*").neq("status", "Finished").execute().data
+    st.subheader("🎯 Allocation & Intervention")
+    active_jobs = conn.table("machining_logs").select("*").neq("status", "Finished").order("priority").execute().data
     
     if not active_jobs:
-        st.info("No active jobs requiring intervention.")
+        st.info("No active jobs.")
     else:
         for job in active_jobs:
-            # Color code: Red for Pending, Yellow for In-Progress
-            status_emoji = "🔴" if job['status'] == "Pending" else "🟡"
-            
-            with st.expander(f"{status_emoji} Job: {job['job_code']} | Part: {job['part_name']}"):
+            p_color = {"URGENT": "🔴", "High": "🟠", "Medium": "🟡", "Low": "⚪"}.get(job['priority'], "⚪")
+            with st.expander(f"{p_color} {job['priority']} | Job: {job['job_code']} | Status: {job['status']}"):
                 
-                # --- NEW: INTERVENTION & DELAY SECTION ---
-                st.markdown("##### ⚠️ Status & Intervention Note")
-                c_delay, c_inter = st.columns(2)
-                delay_reason = c_delay.text_input("Delay Reason (if any)", value=job.get('delay_reason', ''), key=f"del_{job['id']}")
-                intervention = c_inter.text_area("Intervention / Specific Note", value=job.get('intervention_note', ''), key=f"int_{job['id']}")
+                # Intervention Section
+                c_del, c_int = st.columns(2)
+                d_reason = c_del.text_input("Delay Reason", value=job.get('delay_reason',''), key=f"d_{job['id']}")
+                i_note = c_int.text_area("Intervention Note", value=job.get('intervention_note',''), key=f"i_{job['id']}")
                 
-                st.divider()
-
-                # --- DECISION LOGIC ---
+                # Allocation Logic
                 if job['status'] == "Pending":
-                    mode = st.radio("Allotment Mode", ["In-House", "Outsource"], key=f"mode_{job['id']}", horizontal=True)
-                    
+                    mode = st.radio("Mode", ["In-House", "Outsource"], key=f"m_{job['id']}", horizontal=True)
                     if mode == "In-House":
-                        col1, col2 = st.columns(2)
-                        m_sel = col1.selectbox("Machine", machine_list, key=f"m_{job['id']}")
-                        o_sel = col2.selectbox("Operator", operator_list, key=f"o_{job['id']}")
-                        if st.button("Confirm In-House & Update Notes", key=f"bin_{job['id']}"):
-                            conn.table("machining_logs").update({
-                                "status": "In-House", 
-                                "machine_id": m_sel, 
-                                "operator_id": o_sel,
-                                "delay_reason": delay_reason,
-                                "intervention_note": intervention
-                            }).eq("id", job['id']).execute()
+                        c1, c2 = st.columns(2)
+                        m = c1.selectbox("Machine", machine_list, key=f"mac_{job['id']}")
+                        o = c2.selectbox("Operator", operator_list, key=f"op_{job['id']}")
+                        if st.button("Allot In-House", key=f"b1_{job['id']}"):
+                            conn.table("machining_logs").update({"status":"In-House","machine_id":m,"operator_id":o,"delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                             st.rerun()
-                    
-                    else: # Outsource Logic
-                        col1, col2 = st.columns(2)
-                        v_sel = col1.selectbox("Vendor", vendor_list, key=f"v_{job['id']}")
-                        vh_sel = col1.selectbox("Vehicle", vehicle_list, key=f"vh_{job['id']}")
-                        gp_no = col2.text_input("Gate Pass No", key=f"gp_{job['id']}")
-                        if st.button("Dispatch & Update Notes", key=f"bout_{job['id']}"):
-                            conn.table("machining_logs").update({
-                                "status": "Outsourced", 
-                                "vendor_id": v_sel, 
-                                "vehicle_no": vh_sel, 
-                                "gatepass_no": gp_no,
-                                "delay_reason": delay_reason,
-                                "intervention_note": intervention
-                            }).eq("id", job['id']).execute()
+                    else:
+                        c1, c2, c3 = st.columns(3)
+                        v = c1.selectbox("Vendor", vendor_list, key=f"v_{job['id']}")
+                        vh = c2.selectbox("Vehicle", vehicle_list, key=f"vh_{job['id']}")
+                        gp = c3.text_input("Gatepass No", key=f"gp_{job['id']}")
+                        if st.button("Dispatch Outward", key=f"b2_{job['id']}"):
+                            conn.table("machining_logs").update({"status":"Outsourced","vendor_id":v,"vehicle_no":vh,"gatepass_no":gp,"delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                             st.rerun()
-
-                # --- IN-PROGRESS UPDATES (INWARD TRACKING) ---
+                
                 elif job['status'] == "Outsourced":
-                    st.info(f"Currently at Vendor: {job.get('vendor_id')}")
-                    wb_no = st.text_input("Waybill / DC No (On Return)", key=f"wb_{job['id']}")
-                    if st.button("Receive & Close Job", key=f"fin_{job['id']}"):
-                        conn.table("machining_logs").update({
-                            "status": "Finished", 
-                            "waybill_no": wb_no,
-                            "delay_reason": delay_reason,
-                            "intervention_note": intervention
-                        }).eq("id", job['id']).execute()
+                    wb = st.text_input("Waybill No (on return)", key=f"wb_{job['id']}")
+                    if st.button("Receive & Finish", key=f"b3_{job['id']}"):
+                        conn.table("machining_logs").update({"status":"Finished","waybill_no":wb,"delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                         st.rerun()
-
+                
                 elif job['status'] == "In-House":
-                    if st.button("Complete Work & Close", key=f"comp_{job['id']}"):
-                        conn.table("machining_logs").update({
-                            "status": "Finished",
-                            "delay_reason": delay_reason,
-                            "intervention_note": intervention
-                        }).eq("id", job['id']).execute()
+                    if st.button("Work Completed", key=f"b4_{job['id']}"):
+                        conn.table("machining_logs").update({"status":"Finished","delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
                         st.rerun()
 
-# --- TAB 3: LOGBOOK (THE REPOSITORY) ---
-with tab_logbook:
-    st.subheader("📊 Central Production Data")
-    all_data = conn.table("machining_logs").select("*").order("created_at", desc=True).execute().data
-    st.dataframe(all_data, use_container_width=True)
+# --- TAB 3: LOGBOOK ---
+with tab_log:
+    st.subheader("📊 Live Production Log")
+    logs = conn.table("machining_logs").select("*").order("created_at", desc=True).execute().data
+    st.dataframe(logs, use_container_width=True)
 
 # --- TAB 4: MASTERS ---
 with tab_masters:
-    st.subheader("🛠️ Update Master Lists")
-    # (Same data_editor logic for Machine, Operator, Vendor, Vehicle)
-    m_data = conn.table("machine_master").select("*").execute().data
-    ed_m = st.data_editor(m_data, num_rows="dynamic", key="me", use_container_width=True)
-    if st.button("Save Machines"):
-        conn.table("machine_master").upsert(ed_m).execute()
-        st.success("Machine list updated!")
+    st.subheader("🛠️ Master Data Management")
+    # Display the 4 Master Data Editors here as previously discussed...
