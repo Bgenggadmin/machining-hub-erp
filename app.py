@@ -153,50 +153,72 @@ with tab_log:
     st.subheader("📋 Full Production Log")
     st.dataframe(all_data, use_container_width=True)
 
-# --- TAB 5: MASTERS ---
+# --- TAB 5: MASTERS (ADD & DELETE) ---
 with tab_masters:
     st.subheader("🛠️ Master Data Management")
-    admin_pin = st.text_input("Enter Admin Pin", type="password", key="admin_m")
+    admin_pin = st.text_input("Enter Admin Pin to Manage Masters", type="password", key="admin_master_final")
 
     if admin_pin == "1234":
-        st.success("Access Granted")
+        st.success("Admin Access Granted")
         
-        # --- QUICK ADD SECTION ---
-        st.write("### ➕ Quick Add New Entry")
+        # 1. THE ADD SECTION
+        st.write("### ➕ Add New Resource")
         c1, c2, c3 = st.columns([2, 2, 1])
         
-        category = c1.selectbox("Select Category", ["machine_master", "operator_master", "vendor_master", "vehicle_master"])
+        category = c1.selectbox("Select Table", 
+                                ["machine_master", "operator_master", "vendor_master", "vehicle_master"],
+                                key="add_cat")
         
-        # Map category to the specific column name in your Supabase table
-        col_name_map = {
+        # Column Map for Database logic
+        col_map = {
             "machine_master": "machine_name",
             "operator_master": "operator_name",
             "vendor_master": "vendor_name",
             "vehicle_master": "vehicle_number"
         }
         
-        new_val = c2.text_input(f"Enter New {category.split('_')[0].capitalize()}")
+        new_val = c2.text_input(f"New Name for {category.split('_')[0].capitalize()}")
         
-        if c3.button("Add to Master"):
+        if c3.button("➕ Add Entry"):
             if new_val:
-                target_col = col_name_map[category]
-                conn.table(category).insert({target_col: new_val}).execute()
-                st.success(f"Added {new_val} to {category}!")
+                conn.table(category).insert({col_map[category]: new_val}).execute()
+                st.success(f"Added: {new_val}")
                 st.rerun()
+
+        st.divider()
+
+        # 2. THE DELETE SECTION
+        st.write("### 🗑️ Remove Old Resource")
+        d1, d2, d3 = st.columns([2, 2, 1])
         
+        del_cat = d1.selectbox("Select Table to Clean", 
+                               ["machine_master", "operator_master", "vendor_master", "vehicle_master"],
+                               key="del_cat")
+        
+        # Get current list for the selected table to delete from
+        current_list = []
+        if del_cat == "machine_master": current_list = machine_list
+        elif del_cat == "operator_master": current_list = operator_list
+        elif del_cat == "vendor_master": current_list = vendor_list
+        elif del_cat == "vehicle_master": current_list = vehicle_list
+
+        to_delete = d2.selectbox("Select Item to Remove", current_list)
+        
+        if d3.button("🗑️ Delete Permanently"):
+            if to_delete:
+                conn.table(del_cat).delete().eq(col_map[del_cat], to_delete).execute()
+                st.warning(f"Deleted: {to_delete}")
+                st.rerun()
+
         st.divider()
         
-        # --- VIEW CURRENT LISTS ---
-        st.write("### 📜 Current Master Lists")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.write("**Machines**")
-        m1.write(machine_list)
-        m2.write("**Operators**")
-        m2.write(operator_list)
-        m3.write("**Vendors**")
-        m3.write(vendor_list)
-        m4.write("**Vehicles**")
-        m4.write(vehicle_list)
+        # 3. QUICK VIEW
+        st.write("### 📜 Live Master Lists")
+        v1, v2, v3, v4 = st.columns(4)
+        v1.write("**Machines**"); v1.write(machine_list)
+        v2.write("**Operators**"); v2.write(operator_list)
+        v3.write("**Vendors**"); v3.write(vendor_list)
+        v4.write("**Vehicles**"); v4.write(vehicle_list)
         
     else:
-        st.warning("Locked. Please enter PIN.")
+        st.info("Please enter the Admin PIN to manage database masters.")
