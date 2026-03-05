@@ -67,50 +67,88 @@ with tab_prod:
 # --- TAB 2: INCHARGE DECISION (PIN PROTECTED) ---
 with tab_incharge:
     st.subheader("🎯 Allocation & Intervention")
-    auth_code = st.text_input("Enter Incharge Pin to unlock actions", type="password")
+    auth_code = st.text_input("Enter Incharge Pin to unlock actions", type="password", key="incharge_pin")
     
-    if auth_code == "1234": # Change this PIN as needed
+    if auth_code == "1234": # Your Security PIN
+        # Filter only jobs that are not yet "Finished"
         active_jobs = [j for j in all_data if j['status'] != "Finished"]
         
         if not active_jobs:
             st.info("No active jobs pending allocation.")
         else:
             for job in active_jobs:
+                # Priority Visual Indicators
                 p_color = {"URGENT": "🔴", "High": "🟠", "Medium": "🟡", "Low": "⚪"}.get(job['priority'], "⚪")
-                with st.expander(f"{p_color} {job['priority']} | Unit {job['unit_no']} | Job: {job['job_code']}"):
+                
+                with st.expander(f"{p_color} {job['priority']} | Unit {job['unit_no']} | Job: {job['job_code']} - {job['part_name']}"):
+                    # 1. Shared Intervention Fields (Available for all active jobs)
                     c_del, c_int = st.columns(2)
-                    d_reason = c_del.text_input("Delay Reason", value=job.get('delay_reason','') or '', key=f"d_{job['id']}")
-                    i_note = c_int.text_area("Intervention Note", value=job.get('intervention_note','') or '', key=f"i_{job['id']}")
+                    d_reason = c_del.text_input("Delay Reason", value=job.get('delay_reason') or '', key=f"delay_{job['id']}")
+                    i_note = c_int.text_area("Intervention Note", value=job.get('intervention_note') or '', key=f"note_{job['id']}")
                     
+                    st.divider()
+
+                    # 2. STATE 1: PENDING -> Needs Allocation
                     if job['status'] == "Pending":
-                        mode = st.radio("Mode", ["In-House", "Outsource"], key=f"m_{job['id']}", horizontal=True)
+                        mode = st.radio("Allocation Mode", ["In-House", "Outsource"], key=f"mode_{job['id']}", horizontal=True)
+                        
                         if mode == "In-House":
                             c1, c2 = st.columns(2)
-                            m = c1.selectbox("Machine", machine_list, key=f"mac_{job['id']}")
-                            o = c2.selectbox("Operator", operator_list, key=f"op_{job['id']}")
-                            if st.button("Allot In-House", key=f"b1_{job['id']}"):
-                                conn.table("machining_logs").update({"status":"In-House","machine_id":m,"operator_id":o,"delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
+                            m = c1.selectbox("Select Machine", machine_list, key=f"mac_{job['id']}")
+                            o = c2.selectbox("Select Operator", operator_list, key=f"op_{job['id']}")
+                            if st.button("🚀 Allot to Machine", key=f"btn_in_{job['id']}", use_container_width=True):
+                                conn.table("machining_logs").update({
+                                    "status": "In-House",
+                                    "machine_id": m,
+                                    "operator_id": o,
+                                    "delay_reason": d_reason,
+                                    "intervention_note": i_note
+                                }).eq("id", job['id']).execute()
+                                st.success(f"Job {job['job_code']} moved to Production")
                                 st.rerun()
-                        else:
+                        
+                        else: # Outsource Mode
                             c1, c2, c3 = st.columns(3)
-                            v = c1.selectbox("Vendor", vendor_list, key=f"v_{job['id']}")
-                            vh = c2.selectbox("Vehicle", vehicle_list, key=f"vh_{job['id']}")
+                            v = c1.selectbox("Select Vendor", vendor_list, key=f"vend_{job['id']}")
+                            vh = c2.selectbox("Vehicle No", vehicle_list, key=f"veh_{job['id']}")
                             gp = c3.text_input("Gatepass No", key=f"gp_{job['id']}")
-                            if st.button("Dispatch Outward", key=f"b2_{job['id']}"):
-                                conn.table("machining_logs").update({"status":"Outsourced","vendor_id":v,"vehicle_no":vh,"gatepass_no":gp,"delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
+                            if st.button("🚚 Dispatch Outward", key=f"btn_out_{job['id']}", use_container_width=True):
+                                conn.table("machining_logs").update({
+                                    "status": "Outsourced",
+                                    "vendor_id": v,
+                                    "vehicle_no": vh,
+                                    "gatepass_no": gp,
+                                    "delay_reason": d_reason,
+                                    "intervention_note": i_note
+                                }).eq("id", job['id']).execute()
+                                st.success(f"Job {job['job_code']} dispatched to {v}")
                                 st.rerun()
+
+                    # 3. STATE 2: OUTSOURCED -> Needs to be Received back
                     elif job['status'] == "Outsourced":
-                        wb = st.text_input("Waybill No (on return)", key=f"wb_{job['id']}")
-                        if st.button("Receive & Finish", key=f"b3_{job['id']}"):
-                            conn.table("machining_logs").update({"status":"Finished","waybill_no":wb,"delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
+                        st.info(f"Currently at Vendor: **{job.get('vendor_id')}**")
+                        wb = st.text_input("Waybill / Return DC No", key=f"wb_{job['id']}")
+                        if st.button("✅ Mark as Received & Finished", key=f"btn_fin_out_{job['id']}", use_container_width=True):
+                            conn.table("machining_logs").update({
+                                "status": "Finished",
+                                "waybill_no": wb,
+                                "delay_reason": d_reason,
+                                "intervention_note": i_note
+                            }).eq("id", job['id']).execute()
                             st.rerun()
+
+                    # 4. STATE 3: IN-HOUSE -> Needs to be marked Complete
                     elif job['status'] == "In-House":
-                        if st.button("Work Completed", key=f"b4_{job['id']}"):
-                            conn.table("machining_logs").update({"status":"Finished","delay_reason":d_reason,"intervention_note":i_note}).eq("id", job['id']).execute()
+                        st.success(f"Running on Machine: **{job.get('machine_id')}**")
+                        if st.button("🏁 Mark Work Completed", key=f"btn_fin_in_{job['id']}", use_container_width=True):
+                            conn.table("machining_logs").update({
+                                "status": "Finished",
+                                "delay_reason": d_reason,
+                                "intervention_note": i_note
+                            }).eq("id", job['id']).execute()
                             st.rerun()
     else:
-        st.warning("Please enter the Incharge Pin to manage and update jobs.")
-
+        st.warning("🔒 Please enter the Incharge Pin to manage and update jobs.")
 # --- TAB 3: EXECUTIVE ANALYTICS ---
 with tab_analytics:
     st.subheader("📊 Executive Action Center")
