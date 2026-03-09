@@ -11,14 +11,14 @@ conn = st.connection("supabase", type=SupabaseConnection)
 # --- CSS FOR ROUND PILL BUTTONS ---
 st.markdown("""
     <style>
-    div.stButton > button { border-radius: 50px; font-weight: 600; }
+    div.stButton > button { border-radius: 50px; font-weight: 600; padding: 0.5rem 2rem; }
     </style>
 """, unsafe_allow_html=True)
 
 if 'hub' not in st.session_state:
     st.session_state.hub = "Machining Hub"
 
-# --- HUB SELECTION ---
+# --- HUB SELECTION BAR ---
 c1, c2, _ = st.columns([1, 1, 2])
 if c1.button("⚙️ MACHINING HUB", use_container_width=True, type="primary" if st.session_state.hub == "Machining Hub" else "secondary"):
     st.session_state.hub = "Machining Hub"; st.rerun()
@@ -53,9 +53,8 @@ tab_prod, tab_incharge, tab_analytics, tab_log, tab_masters = st.tabs([
     "📝 Request & Live", "👨‍💻 Incharge Desk", "📊 Executive Analytics", "📋 Full Logbook", "🛠️ Masters"
 ])
 
-# --- TAB 1: PRODUCTION REQUEST & LIVE (Unchanged) ---
+# --- TAB 1: PRODUCTION REQUEST & LIVE ---
 with tab_prod:
-    st.subheader(f"📋 New {st.session_state.hub} Request")
     with st.form("prod_form", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         u_no, j_code = c1.selectbox("Unit No", [1, 2, 3]), c1.text_input("Job Code")
@@ -66,104 +65,92 @@ with tab_prod:
             if j_code and part:
                 conn.table(DB_TABLE).insert({"unit_no": u_no, "job_code": j_code, "part_name": part, "activity_type": act, "required_date": str(req_date), "request_date": str(datetime.date.today()), "priority": prio, "status": "Pending", "special_notes": notes}).execute(); st.rerun()
 
-    st.divider()
     if all_data:
         df_status = pd.DataFrame(all_data)
         df_status['required_date'] = pd.to_datetime(df_status['required_date'], errors='coerce')
         df_status['Days Left'] = (df_status['required_date'] - pd.Timestamp(datetime.date.today())).dt.days
-        unit_sel = st.radio("View Unit", [1, 2, 3], horizontal=True)
-        st.dataframe(df_status[df_status['unit_no'] == unit_sel][['job_code', 'part_name', 'status', 'priority', 'required_date', 'Days Left', 'special_notes']], use_container_width=True, hide_index=True)
+        st.subheader("🚦 Shop Floor Status")
+        st.dataframe(df_status[['job_code', 'part_name', 'status', 'priority', 'required_date', 'Days Left']], use_container_width=True, hide_index=True)
 
-# --- TAB 2: INCHARGE DESK (RESTORED LOGISTICS & PIN) ---
+# --- TAB 2: INCHARGE DESK (PIN REMOVED - FULL ENTRY LOGIC) ---
 with tab_incharge:
-    auth_code = st.text_input("Enter Incharge Pin", type="password", key="inch_pin")
-    if auth_code == "1234":
-        active_jobs = [j for j in all_data if j['status'] != "Finished"]
-        for job in active_jobs:
-            p_marker = {"URGENT": "🔴", "High": "🟠", "Medium": "🟡", "Low": "⚪"}.get(job['priority'], "⚪")
-            with st.expander(f"{p_marker} Unit {job['unit_no']} | {job['job_code']} - {job['part_name']}"):
-                c_del, c_int = st.columns(2)
-                d_reason = c_del.text_input("Delay Reason", value=job.get('delay_reason') or '', key=f"d_{job['id']}")
-                i_note = c_int.text_area("Intervention Note", value=job.get('intervention_note') or '', key=f"n_{job['id']}")
-                
-                if job['status'] == "Pending":
-                    mode = st.radio("Path", ["In-House", "Outsource"], key=f"mode_{job['id']}", horizontal=True)
-                    if mode == "In-House":
-                        c1, c2 = st.columns(2)
-                        m, o = c1.selectbox(f"Select {RES_LABEL}", resource_list, key=f"m_{job['id']}"), c2.selectbox("Select Operator", operator_list, key=f"o_{job['id']}")
-                        if st.button("🚀 Allot", key=f"btn_in_{job['id']}", use_container_width=True):
-                            conn.table(DB_TABLE).update({"status": "In-House", "machine_id": m, "operator_id": o, "delay_reason": d_reason, "intervention_note": i_note}).eq("id", job['id']).execute(); st.rerun()
-                    else:
-                        c1, c2, c3 = st.columns(3)
-                        v, vh, gp = c1.selectbox("Vendor", vendor_list, key=f"v_{job['id']}"), c2.selectbox("Vehicle", vehicle_list, key=f"vh_{job['id']}"), c3.text_input("Gatepass No", key=f"gp_{job['id']}")
-                        if st.button("🚚 Dispatch", key=f"btn_out_{job['id']}", use_container_width=True):
-                            conn.table(DB_TABLE).update({"status": "Outsourced", "vendor_id": v, "vehicle_no": vh, "gatepass_no": gp, "delay_reason": d_reason, "intervention_note": i_note}).eq("id", job['id']).execute(); st.rerun()
-                elif job['status'] == "Outsourced":
-                    wb = st.text_input("Waybill No", key=f"wb_{job['id']}")
-                    if st.button("✅ Received", key=f"btn_fin_out_{job['id']}", use_container_width=True):
-                        conn.table(DB_TABLE).update({"status": "Finished", "waybill_no": wb, "delay_reason": d_reason, "intervention_note": i_note}).eq("id", job['id']).execute(); st.rerun()
-                elif job['status'] == "In-House":
-                    if st.button("🏁 Finish", key=f"btn_fin_in_{job['id']}", use_container_width=True):
-                        conn.table(DB_TABLE).update({"status": "Finished", "delay_reason": d_reason, "intervention_note": i_note}).eq("id", job['id']).execute(); st.rerun()
-    else: st.warning("🔒 Enter Incharge Pin.")
+    active_jobs = [j for j in all_data if j['status'] != "Finished"]
+    if not active_jobs:
+        st.info("No active jobs to manage.")
+    for job in active_jobs:
+        p_marker = {"URGENT": "🔴", "High": "🟠", "Medium": "🟡", "Low": "⚪"}.get(job['priority'], "⚪")
+        with st.expander(f"{p_marker} Job: {job['job_code']} | Part: {job['part_name']} | Status: {job['status']}"):
+            
+            # Shared Intervention Inputs
+            c_del, c_int = st.columns(2)
+            d_reason = c_del.text_input("Delay Reason", value=job.get('delay_reason') or '', key=f"d_{job['id']}")
+            i_note = c_int.text_area("Intervention Note", value=job.get('intervention_note') or '', key=f"n_{job['id']}")
+            
+            st.divider()
 
-# --- TAB 3: EXECUTIVE ANALYTICS (EXPANDED FIELDS) ---
+            # 1. PENDING -> Needs Allocation (In-House or Outsource)
+            if job['status'] == "Pending":
+                mode = st.radio("Allocation Mode", ["In-House", "Outsource"], key=f"mode_{job['id']}", horizontal=True)
+                if mode == "In-House":
+                    c1, c2 = st.columns(2)
+                    m = c1.selectbox(f"Select {RES_LABEL}", resource_list, key=f"m_{job['id']}")
+                    o = c2.selectbox("Select Operator", operator_list, key=f"o_{job['id']}")
+                    if st.button("🚀 Allot to Production", key=f"btn_in_{job['id']}", use_container_width=True):
+                        conn.table(DB_TABLE).update({"status": "In-House", "machine_id": m, "operator_id": o, "delay_reason": d_reason, "intervention_note": i_note}).eq("id", job['id']).execute(); st.rerun()
+                else:
+                    c1, c2, c3 = st.columns(3)
+                    v = c1.selectbox("Select Vendor", vendor_list, key=f"v_{job['id']}")
+                    vh = c2.selectbox("Vehicle No", vehicle_list, key=f"vh_{job['id']}")
+                    gp = c3.text_input("Gatepass No", key=f"gp_{job['id']}")
+                    if st.button("🚚 Dispatch Outward", key=f"btn_out_{job['id']}", use_container_width=True):
+                        conn.table(DB_TABLE).update({"status": "Outsourced", "vendor_id": v, "vehicle_no": vh, "gatepass_no": gp, "delay_reason": d_reason, "intervention_note": i_note}).eq("id", job['id']).execute(); st.rerun()
+
+            # 2. OUTSOURCED -> Needs Waybill to Finish
+            elif job['status'] == "Outsourced":
+                st.warning(f"Currently with Vendor: {job.get('vendor_id')}")
+                wb = st.text_input("Waybill / Return DC No", key=f"wb_{job['id']}")
+                if st.button("✅ Mark as Received & Finished", key=f"btn_fin_out_{job['id']}", use_container_width=True):
+                    conn.table(DB_TABLE).update({"status": "Finished", "waybill_no": wb, "delay_reason": d_reason, "intervention_note": i_note}).eq("id", job['id']).execute(); st.rerun()
+
+            # 3. IN-HOUSE -> Simple Finish
+            elif job['status'] == "In-House":
+                st.success(f"Running on {RES_LABEL}: {job.get('machine_id')}")
+                if st.button("🏁 Mark Work Completed", key=f"btn_fin_in_{job['id']}", use_container_width=True):
+                    conn.table(DB_TABLE).update({"status": "Finished", "delay_reason": d_reason, "intervention_note": i_note}).eq("id", job['id']).execute(); st.rerun()
+
+# --- TAB 3: EXECUTIVE ANALYTICS (EXPANDED) ---
 with tab_analytics:
     if all_data:
         df = pd.DataFrame(all_data)
-        df['required_date'] = pd.to_datetime(df['required_date'], errors='coerce')
+        st.subheader("📊 Full Load & Logistics Analysis")
         
-        # 1. Summary Metrics
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Jobs", len(df))
-        m2.metric("In-House WIP", len(df[df['status'] == 'In-House']))
-        m3.metric("Outsourced", len(df[df['status'] == 'Outsourced']))
-        m4.metric("Pending Allotment", len(df[df['status'] == 'Pending']))
-
-        # 2. Expanded View: Logistics & Delay Tracker
-        st.write("### 🚛 Vendor & Logistics Tracker")
-        v_df = df[df['status'] == 'Outsourced'].copy()
-        if not v_df.empty:
-            st.dataframe(v_df[['job_code', 'part_name', 'vendor_id', 'vehicle_no', 'gatepass_no', 'required_date', 'delay_reason']], use_container_width=True, hide_index=True)
-        else: st.info("No jobs currently at vendors.")
-
-        # 3. Expanded View: Machine/Station Load
-        st.write(f"### ⚙️ {RES_LABEL} Load Analysis")
-        load_df = df[df['status'] == 'In-House'].copy()
-        if not load_df.empty:
-            st.dataframe(load_df[['machine_id', 'job_code', 'part_name', 'operator_id', 'priority', 'intervention_note']], use_container_width=True, hide_index=True)
-        else: st.info(f"No active jobs on {RES_LABEL}s.")
-
-        # 4. Urgent/High Priority (Maintained from Master)
-        st.error("### 🚨 Urgent & High Priority Action List")
-        urgent = df[(df['priority'].isin(['URGENT', 'High'])) & (df['status'] != 'Finished')]
-        st.dataframe(urgent[['job_code', 'part_name', 'status', 'required_date', 'delay_reason', 'special_notes']], use_container_width=True, hide_index=True)
-
+        # Breakdown Tables
+        c1, c2 = st.columns(2)
+        with c1:
+            st.write("**In-House Workload**")
+            st.dataframe(df[df['status'] == 'In-House'][['machine_id', 'job_code', 'operator_id', 'priority']], use_container_width=True, hide_index=True)
+        with c2:
+            st.write("**Vendor Status**")
+            st.dataframe(df[df['status'] == 'Outsourced'][['vendor_id', 'job_code', 'vehicle_no', 'gatepass_no']], use_container_width=True, hide_index=True)
+        
         st.divider()
-        # Export Logic (Maintained)
-        report_df = df.copy()
-        for col in report_df.columns:
-            if pd.api.types.is_datetime64_any_dtype(report_df[col]): report_df[col] = report_df[col].dt.tz_localize(None)
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer: report_df.to_excel(writer, index=False, sheet_name='ERP_Export')
-        st.download_button("📂 Download Full Excel Report", data=buffer.getvalue(), file_name=f"BG_Analytics_{datetime.date.today()}.xlsx")
+        st.write("**Detailed History & Logistics Audit**")
+        st.dataframe(df, use_container_width=True) # Shows all fields including waybill, gatepass, etc.
 
-# --- TAB 5: MASTERS (Unchanged) ---
+# --- TAB 5: MASTERS (PIN REMOVED) ---
 with tab_masters:
-    admin_pin = st.text_input("Admin Pin", type="password", key="adm_pin")
-    if admin_pin == "1234":
-        col_map = {MASTER_TABLE: MASTER_COL, "beta_operator_master": "operator_name", "beta_vendor_master": "vendor_name", "beta_vehicle_master": "vehicle_number"}
-        st.write("### ➕ Add Resource")
-        c1, c2, c3 = st.columns([2, 2, 1])
-        add_cat = c1.selectbox("Table", list(col_map.keys()), key="add_cat")
-        new_val = c2.text_input("Name", key="add_val")
-        if c3.button("➕ Add"):
-            if new_val: conn.table(add_cat).insert({col_map[add_cat]: new_val}).execute(); st.rerun()
-        st.divider()
-        st.write("### 🗑️ Remove Resource")
-        d1, d2, d3 = st.columns([2, 2, 1])
-        del_cat = d1.selectbox("Table", list(col_map.keys()), key="del_cat")
-        current_items = [r[col_map[del_cat]] for r in conn.table(del_cat).select(col_map[del_cat]).execute().data or []]
-        to_del = d2.selectbox("Item", current_items, key="del_val")
-        if d3.button("🗑️ Delete"):
-            if to_del: conn.table(del_cat).delete().eq(col_map[del_cat], to_del).execute(); st.rerun()
+    col_map = {MASTER_TABLE: MASTER_COL, "beta_operator_master": "operator_name", "beta_vendor_master": "vendor_name", "beta_vehicle_master": "vehicle_number"}
+    st.write("### ➕ Add / 🗑️ Remove Master Data")
+    c1, c2, c3 = st.columns([2, 2, 1])
+    cat = c1.selectbox("Resource Category", list(col_map.keys()))
+    val = c2.text_input("Entry Name")
+    if c3.button("➕ Add Entry"):
+        if val: conn.table(cat).insert({col_map[cat]: val}).execute(); st.rerun()
+    
+    st.divider()
+    d1, d2, d3 = st.columns([2, 2, 1])
+    d_cat = d1.selectbox("Remove From", list(col_map.keys()), key="del_cat")
+    d_items = [r[col_map[d_cat]] for r in conn.table(d_cat).select(col_map[d_cat]).execute().data or []]
+    d_val = d2.selectbox("Select Item to Delete", d_items)
+    if d3.button("🗑️ Permanent Delete"):
+        if d_val: conn.table(d_cat).delete().eq(col_map[d_cat], d_val).execute(); st.rerun()
