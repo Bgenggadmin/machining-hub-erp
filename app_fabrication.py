@@ -9,27 +9,30 @@ st.set_page_config(page_title="Welding & Cutting Hub", layout="wide")
 st.sidebar.title("🎯 Department Select")
 hub_choice = st.sidebar.radio("Go to Hub:", ["Cutting Hub", "Welding Hub"])
 
-# --- 2. CONFIGURATION ---
-# We use the same table but filter by a 'hub_name' column for simplicity
+# --- 2. DYNAMIC CONFIGURATION ---
 DB_TABLE = "fabrication_logs" 
 if hub_choice == "Cutting Hub":
     MASTER_TABLE = "cnc_machine_master"
     MASTER_COL = "machine_name"
     RES_LABEL = "Cutting Machine"
+    OP_LABEL = "Operator" # <--- Specific for CNC
     ACTIVITIES = ["Laser Cutting", "Plasma Cutting", "Oxygen Cutting", "Waterjet"]
 else:
     MASTER_TABLE = "welding_bay_master"
     MASTER_COL = "bay_name"
     RES_LABEL = "Welding Bay"
+    OP_LABEL = "Welder"   # <--- Specific for Welding
     ACTIVITIES = ["TIG Welding", "MIG Welding", "ARC Welding", "Grinding"]
 
 # --- 3. DATABASE CONNECTION ---
 conn = st.connection("supabase", type=SupabaseConnection)
 
 def get_all_data():
-    # Fetch only logs belonging to the active Hub
+    # Fetch logs for the specific Hub
     logs = conn.table(DB_TABLE).select("*").eq("hub_name", hub_choice).order("id", desc=True).execute()
+    # Fetch Hub-specific machines/bays
     res_m = conn.table(MASTER_TABLE).select("*").execute()
+    # Fetch common operators (or you can create separate ones if preferred)
     op_m = conn.table("fab_operator_master").select("*").execute()
     
     return (
@@ -79,46 +82,57 @@ with tabs[1]:
     if not active_jobs: st.info(f"No pending work in {hub_choice}.")
 
     for job in active_jobs:
-        # We explicitly show the ACTIVITY REQUESTED here
-        with st.expander(f"📋 {job['job_code']} | {job['activity_type']} | {job['unit_no']}"):
-            st.info(f"**Part:** {job['part_name']} | **Requested Activity:** {job['activity_type']} | **Notes:** {job['special_notes']}")
+        with st.expander(f"📋 {job['job_code']} | Activity: {job['activity_type']} | {job['unit_no']}"):
+            st.info(f"**Part:** {job['part_name']} | **Priority:** {job['priority']} | **Notes:** {job['special_notes']}")
             
             if job['status'] == "Pending":
                 c1, c2, c3 = st.columns(3)
                 m_id = c1.selectbox(f"Assign {RES_LABEL}", resource_list, key=f"m_{job['id']}")
-                l_type = c2.radio("Labor", ["Regular", "Temporary"], key=f"lt_{job['id']}")
-                o_name = c3.selectbox("Operator", operator_list, key=f"op_{job['id']}") if l_type == "Regular" else c3.text_input("Temp Name", key=f"opt_{job['id']}")
+                l_type = c2.radio("Labor Type", ["Regular", "Temporary"], key=f"lt_{job['id']}", horizontal=True)
                 
-                if st.button("🚀 Start Production", key=f"btn_{job['id']}", use_container_width=True):
+                # Dynamic Label based on Hub
+                if l_type == "Regular":
+                    o_name = c3.selectbox(f"Select {OP_LABEL}", operator_list, key=f"op_{job['id']}")
+                else:
+                    o_name = c3.text_input(f"Enter Temp {OP_LABEL} Name", key=f"opt_{job['id']}")
+                
+                if st.button(f"🚀 Start {hub_choice.split()[0]}", key=f"btn_{job['id']}", use_container_width=True):
                     if o_name:
-                        conn.table(DB_TABLE).update({"status": "In-Progress", "machine_id": m_id, "operator_name": o_name}).eq("id", job['id']).execute(); st.rerun()
+                        conn.table(DB_TABLE).update({
+                            "status": "In-Progress", 
+                            "machine_id": m_id, 
+                            "operator_name": o_name
+                        }).eq("id", job['id']).execute(); st.rerun()
+                    else: st.warning(f"Please provide the {OP_LABEL} name.")
             
             elif job['status'] == "In-Progress":
-                st.warning(f"Ongoing: {job['machine_id']} | Worker: {job['operator_name']}")
+                st.warning(f"Ongoing: {job['machine_id']} | {OP_LABEL}: {job['operator_name']}")
+                dr = st.text_input("Delay Reason (Optional)", value=job['delay_reason'] or "", key=f"dr_{job['id']}")
                 if st.button("🏁 Mark Finished", key=f"f_{job['id']}", use_container_width=True):
-                    conn.table(DB_TABLE).update({"status": "Finished"}).eq("id", job['id']).execute(); st.rerun()
+                    conn.table(DB_TABLE).update({"status": "Finished", "delay_reason": dr}).eq("id", job['id']).execute(); st.rerun()
 
 # --- TAB 3: LIVE SUMMARY TABLE ---
 with tabs[2]:
-    st.subheader(f"📊 {hub_choice} Status Board")
+    st.subheader(f"📊 {hub_choice} Live Summary Board")
     if not df_main.empty:
-        # Displaying only requested columns
+        # Displaying requested columns
         display_cols = ["job_code", "unit_no", "part_name", "activity_type", "status", "machine_id", "operator_name", "priority", "required_date"]
+        # Format the table for better visibility
         st.dataframe(df_main[display_cols], use_container_width=True, hide_index=True)
     else:
-        st.info("No records to display.")
+        st.info("No records found for this Hub.")
 
 # --- TAB 4: MASTER REGISTRY ---
 with tabs[3]:
-    st.subheader(f"Update {hub_choice} Masters")
+    st.subheader(f"Manage {hub_choice} Resources")
     c1, c2 = st.columns(2)
     with c1:
-        new_res = st.text_input(f"New {RES_LABEL}")
-        if st.button(f"Add {RES_LABEL}"):
+        new_res = st.text_input(f"Add New {RES_LABEL}")
+        if st.button(f"Save {RES_LABEL}"):
             conn.table(MASTER_TABLE).insert({MASTER_COL: new_res}).execute(); st.rerun()
-        st.write("Current Machines/Bays:", resource_list)
+        st.write(f"Current {RES_LABEL}s:", resource_list)
     with c2:
-        new_op = st.text_input("New Regular Operator")
-        if st.button("Add Operator"):
+        new_op = st.text_input(f"Add Regular {OP_LABEL}")
+        if st.button(f"Save {OP_LABEL}"):
             conn.table("fab_operator_master").insert({"op_name": new_op}).execute(); st.rerun()
-        st.write("Current Operators:", operator_list)
+        st.write(f"Current {OP_LABEL}s:", operator_list)
