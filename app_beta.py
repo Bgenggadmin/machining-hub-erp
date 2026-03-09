@@ -97,9 +97,7 @@ with tabs[0]:
 
 # --- TAB 2: INCHARGE ENTRY DESK (LOGIC SEPARATION) ---
 with tabs[1]:
-    if st.button("🔄 Refresh Job List", use_container_width=True):
-    st.rerun()
-    active_jobs = df_main[df_main['status'] != "Finished"].to_dict('records')
+        active_jobs = df_main[df_main['status'] != "Finished"].to_dict('records')
     if not active_jobs:
         st.info("No active jobs currently.")
     for job in active_jobs:
