@@ -20,13 +20,15 @@ if c1.button("⚙️ MACHINING HUB", use_container_width=True, type="primary" if
 if c2.button("✨ BUFFING HUB", use_container_width=True, type="primary" if st.session_state.hub == "Buffing Hub" else "secondary"):
     st.session_state.hub = "Buffing Hub"; st.rerun()
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION & HUB LOGIC ---
 if st.session_state.hub == "Machining Hub":
     DB_TABLE, MASTER_TABLE, MASTER_COL, RES_LABEL = "beta_machining_logs", "beta_machine_master", "machine_name", "Machine"
     ACTIVITIES = ["Turning", "Drilling", "Milling", "Keyway", "Dishbending"]
+    IS_BUFFING = False
 else:
     DB_TABLE, MASTER_TABLE, MASTER_COL, RES_LABEL = "beta_buffing_logs", "beta_buffing_station_master", "station_name", "Buffing Station"
     ACTIVITIES = ["Rough Buffing", "Mirror Polishing", "Satin Finish", "RA Value Check"]
+    IS_BUFFING = True
 
 OP_MASTER = "operator_master"
 VN_MASTER = "vendor_master"
@@ -77,7 +79,7 @@ with tabs[0]:
                 conn.table(DB_TABLE).insert({
                     "unit_no": u_no, "job_code": j_code, "part_name": part, 
                     "activity_type": act, "required_date": str(req_d), 
-                    "request_date": str(datetime.date.today()), # ADDED REQUEST DATE
+                    "request_date": str(datetime.date.today()), 
                     "status": "Pending", "priority": prio, "special_notes": notes
                 }).execute(); st.rerun()
 
@@ -89,19 +91,18 @@ with tabs[0]:
         today = pd.Timestamp(datetime.date.today())
         temp_df['Days Left'] = (temp_df['required_date'] - today).dt.days
         
-        unit_filter = st.radio("Filter by Unit", [1, 2, 3], horizontal=True)
-        # ADDED REQUEST DATE TO SUMMARY
+        unit_filter = st.radio("Filter by Unit", [1, 2, 3], horizontal=True, key="unit_summary_filter")
         summary_cols = ['job_code', 'part_name', 'status', 'priority', 'request_date', 'required_date', 'Days Left', 'special_notes']
         st.dataframe(temp_df[temp_df['unit_no'] == unit_filter][summary_cols], use_container_width=True, hide_index=True)
 
-# --- TAB 2: INCHARGE ENTRY DESK ---
+# --- TAB 2: INCHARGE ENTRY DESK (LOGIC SEPARATION) ---
 with tabs[1]:
     active_jobs = df_main[df_main['status'] != "Finished"].to_dict('records')
     if not active_jobs:
         st.info("No active jobs currently.")
     for job in active_jobs:
         with st.expander(f"📌 {job['job_code']} | {job['part_name']} | Unit {job['unit_no']} ({job['status']})"):
-            # RESTORED REQUEST INFO & PRODUCTION NOTES
+            # RELEVANT FIELD DISPLAY
             st.info(f"📅 **Req. Date:** {job['required_date']} | **Posted:** {job['request_date']} | 📝 **Notes:** {job['special_notes']}")
             
             c_del, c_int = st.columns(2)
@@ -109,8 +110,7 @@ with tabs[1]:
             i_n = c_int.text_area("Incharge Note", value=job['intervention_note'] or '', key=f"in_{job['id']}")
             
             if job['status'] == "Pending":
-                # LOGIC SWITCH FOR BUFFING VS MACHINING
-                outsource_label = "Contract Manpower" if st.session_state.hub == "Buffing Hub" else "Outsource"
+                outsource_label = "Contract Manpower" if IS_BUFFING else "Outsource"
                 mode = st.radio("Allotment", ["In-House", outsource_label], key=f"m_{job['id']}", horizontal=True)
                 
                 if mode == "In-House":
@@ -120,7 +120,7 @@ with tabs[1]:
                     if st.button("🚀 Start In-House", key=f"b_ih_{job['id']}", use_container_width=True):
                         conn.table(DB_TABLE).update({"status": "In-House", "machine_id": m, "operator_id": o, "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
                 
-                elif mode == "Contract Manpower": # BUFFING SPECIFIC
+                elif mode == "Contract Manpower" and IS_BUFFING:
                     c1, c2 = st.columns(2)
                     v_name = c1.selectbox("Contractor Agency", vendor_list, key=f"v_buff_{job['id']}")
                     c_name = c2.text_input("Specific Worker Name", key=f"worker_{job['id']}")
@@ -143,17 +143,24 @@ with tabs[1]:
                 if st.button("🏁 Mark Finished", key=f"b_fi_{job['id']}", use_container_width=True):
                     conn.table(DB_TABLE).update({"status": "Finished", "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
 
-# --- TAB 3: EXECUTIVE ANALYTICS ---
+# --- TAB 3: EXECUTIVE ANALYTICS (RELEVANT VIEW) ---
 with tabs[2]:
     if not df_main.empty:
-        st.write("### 🌍 Shop Floor Overview")
-        st.dataframe(df_main, use_container_width=True, hide_index=True)
+        st.write(f"### 🌍 {st.session_state.hub} Shop Floor Overview")
+        # Show specific columns based on hub to keep it clean
+        cols = ['job_code', 'part_name', 'status', 'priority', 'request_date', 'required_date']
+        if IS_BUFFING:
+            cols += ['vendor_id', 'contractor_name']
+        else:
+            cols += ['machine_id', 'operator_id', 'vendor_id', 'vehicle_no', 'gatepass_no']
+        
+        st.dataframe(df_main[cols], use_container_width=True, hide_index=True)
 
 # --- TAB 4: MASTERS ---
 with tabs[3]:
     cmap = {MASTER_TABLE: MASTER_COL, OP_MASTER: "operator_name", VN_MASTER: "vendor_name", VH_MASTER: "vehicle_number"}
     c1, c2, c3 = st.columns([2, 2, 1])
     cat = c1.selectbox("Category", list(cmap.keys()))
-    val = c2.text_input("Name")
+    val = c2.text_input("Add New Entry")
     if c3.button("➕ Add Entry"):
         if val: conn.table(cat).insert({cmap[cat]: val}).execute(); st.rerun()
