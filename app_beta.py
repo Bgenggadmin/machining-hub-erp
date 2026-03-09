@@ -156,11 +156,74 @@ with tabs[2]:
         
         st.dataframe(df_main[cols], use_container_width=True, hide_index=True)
 
-# --- TAB 4: MASTERS ---
+# --- TAB 4: MASTERS (USER-FRIENDLY DASHBOARD) ---
 with tabs[3]:
-    cmap = {MASTER_TABLE: MASTER_COL, OP_MASTER: "operator_name", VN_MASTER: "vendor_name", VH_MASTER: "vehicle_number"}
-    c1, c2, c3 = st.columns([2, 2, 1])
-    cat = c1.selectbox("Category", list(cmap.keys()))
-    val = c2.text_input("Add New Entry")
-    if c3.button("➕ Add Entry"):
-        if val: conn.table(cat).insert({cmap[cat]: val}).execute(); st.rerun()
+    st.markdown("### 🛠️ System Master Registry")
+    st.info("Select a category below to view, search, or add new system records.")
+
+    # 1. Configuration & Clean Mapping
+    # This ensures users see 'Vendor Master' instead of 'vendor_master'
+    cmap = {
+        MASTER_TABLE: MASTER_COL, 
+        OP_MASTER: "operator_name", 
+        VN_MASTER: "vendor_name", 
+        VH_MASTER: "vehicle_number"
+    }
+    
+    # 2. Category Selection with Clean Labels
+    selected_cat = st.segmented_control(
+        "Choose Registry to Manage", 
+        options=list(cmap.keys()),
+        format_func=lambda x: x.replace('_', ' ').replace('beta ', '').title(),
+        default=MASTER_TABLE
+    )
+
+    st.divider()
+
+    # 3. Two-Column Workspace
+    col_view, col_add = st.columns([2, 1], gap="large")
+
+    with col_view:
+        st.subheader(f"📋 Current {selected_cat.replace('_', ' ').title()}")
+        try:
+            # Fetch data
+            res = conn.table(selected_cat).select("*").execute().data
+            if res:
+                master_df = pd.DataFrame(res)
+                
+                # Search bar for existing records
+                search_term = st.text_input("🔍 Search entries...", placeholder="Type to filter list...")
+                
+                display_col = cmap[selected_cat]
+                if search_term:
+                    master_df = master_df[master_df[display_col].str.contains(search_term, case=False, na=False)]
+                
+                # Display high-quality table
+                st.dataframe(
+                    master_df[[display_col]], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    height=350
+                )
+                st.caption(f"Total Records: {len(master_df)}")
+            else:
+                st.warning("No records found in this category.")
+        except Exception as e:
+            st.error(f"Could not load data: {e}")
+
+    with col_add:
+        st.subheader("➕ Quick Add")
+        with st.container(border=True):
+            field_name = cmap[selected_cat].replace('_', ' ').title()
+            new_val = st.text_input(f"New {field_name}")
+            
+            if st.button("Register Entry", use_container_width=True, type="primary"):
+                if new_val.strip():
+                    try:
+                        conn.table(selected_cat).insert({cmap[selected_cat]: new_val.strip()}).execute()
+                        st.success(f"Registered: {new_val}")
+                        st.rerun()
+                    except:
+                        st.error("Duplicate or invalid entry.")
+                else:
+                    st.error("Entry cannot be empty.")
