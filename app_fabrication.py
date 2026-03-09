@@ -1,94 +1,114 @@
 import streamlit as st
 from st_supabase_connection import SupabaseConnection
+import datetime
+import pandas as pd
 
 st.set_page_config(page_title="Fabrication ERP", layout="wide")
 
-# --- 1. HUB SELECTION ---
-if 'hub' not in st.session_state:
-    st.session_state.hub = "Welding Hub"
-
-st.sidebar.title("🏭 Fabrication Control")
-st.session_state.hub = st.sidebar.radio("Select Department", ["Welding Hub", "CNC Cutting Hub"])
-
-# --- 2. CONFIGURATION ---
-if st.session_state.hub == "Welding Hub":
-    DB_TABLE, MASTER_TABLE, MASTER_COL, RES_LABEL = "welding_logs", "welding_bay_master", "bay_name", "Welding Bay"
-    ACTIVITIES = ["Arc Welding", "TIG", "MIG", "Grinding"]
-else:
-    DB_TABLE, MASTER_TABLE, MASTER_COL, RES_LABEL = "cnc_logs", "cnc_machine_master", "machine_name", "CNC Machine"
-    ACTIVITIES = ["Laser Cutting", "Plasma", "Oxygen Cutting", "Waterjet"]
-
-# --- 3. DATABASE CONNECTION ---
+# --- 1. DATABASE CONNECTION ---
 conn = st.connection("supabase", type=SupabaseConnection)
 
-def get_data():
-    logs = conn.table(DB_TABLE).select("*").order("id", desc=True).execute()
-    masters = conn.table(MASTER_TABLE).select("*").execute()
-    return logs.data, [m[MASTER_COL] for m in masters.data]
+def get_all_data():
+    # Fetch Logs
+    logs = conn.table("fabrication_logs").select("*").order("id", desc=True).execute()
+    # Fetch Masters
+    res_m = conn.table("fab_resource_master").select("*").execute()
+    op_m = conn.table("fab_operator_master").select("*").execute()
+    
+    return (
+        pd.DataFrame(logs.data) if logs.data else pd.DataFrame(),
+        [r['res_name'] for r in res_m.data],
+        [o['op_name'] for o in op_m.data]
+    )
 
-df_data, resource_list = get_data()
+df_main, resource_list, operator_list = get_all_data()
 
-# --- 4. APP TABS ---
-tabs = st.tabs(["📝 Production Request", "👨‍🏭 Incharge Desk", "📊 Analytics", "⚙️ Masters"])
+# --- 2. HEADER & TABS ---
+st.title("👨‍🏭 Fabrication Production Hub")
+tabs = st.tabs(["📝 Production Request", "👨‍🏭 Incharge Desk", "📊 Live Summary", "⚙️ Master Registry"])
 
 # --- TAB 1: PRODUCTION REQUEST ---
 with tabs[0]:
-    st.header(f"New {st.session_state.hub} Request")
-    with st.form("request_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        j_code = c1.text_input("Job Code (Required)")
-        part = c2.text_input("Part Name")
-        u_no = c3.number_input("Unit No", min_value=1, step=1)
+    st.subheader("Create New Request")
+    with st.form("fab_request", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        u_no = col1.number_input("Unit No", min_value=1, step=1)
+        part = col2.text_input("Part Name")
+        req_d = col3.date_input("Required Date")
         
-        act = st.selectbox("Activity Type", ACTIVITIES)
+        col4, col5, col6 = st.columns(3)
+        j_code = col4.text_input("Job Code (Required)")
+        act = col5.selectbox("Activity", ["TIG Welding", "MIG Welding", "ARC Welding", "Grinding", "CNC Laser", "CNC Plasma"])
+        prio = col6.selectbox("Priority", ["Normal", "Urgent", "Critical"])
         
-        if st.form_submit_button("Submit to Shop Floor"):
+        sub_by = st.text_input("Submitted By (Your Name)")
+        notes = st.text_area("Special Notes")
+        
+        if st.form_submit_button("Submit Request"):
             if j_code:
-                conn.table(DB_TABLE).insert({
-                    "job_code": j_code, "part_name": part, "unit_no": u_no, 
-                    "activity_type": act, "status": "Pending"
+                conn.table("fabrication_logs").insert({
+                    "unit_no": u_no, "part_name": part, "required_date": str(req_d),
+                    "job_code": j_code, "activity_type": act, "priority": prio,
+                    "submitted_by": sub_by, "special_notes": notes, "status": "Pending",
+                    "request_date": str(datetime.date.today())
                 }).execute()
-                st.success("Request sent!"); st.rerun()
+                st.success(f"Job {j_code} submitted!"); st.rerun()
             else:
                 st.error("Job Code is mandatory.")
 
-# --- TAB 2: INCHARGE DESK ---
+# --- TAB 2: INCHARGE DESK (Allotment) ---
 with tabs[1]:
-    active_jobs = [j for j in df_data if j['status'] != "Finished"]
-    if not active_jobs: st.info("No pending work.")
-    
+    active_jobs = df_main[df_main['status'] != "Finished"].to_dict('records') if not df_main.empty else []
+    if not active_jobs: st.info("No pending work orders.")
+
     for job in active_jobs:
-        with st.expander(f"📌 {job['job_code']} | {job['part_name']} ({job['status']})"):
+        with st.expander(f"📌 {job['job_code']} | {job['part_name']} (Unit {job['unit_no']})"):
+            st.write(f"**Activity:** {job['activity_type']} | **Req Date:** {job['required_date']} | **By:** {job['submitted_by']}")
+            
             if job['status'] == "Pending":
-                c1, c2 = st.columns(2)
-                res = c1.selectbox(f"Assign {RES_LABEL}", resource_list, key=f"res_{job['id']}")
-                worker = c2.text_input("Worker Name (Temp/Regular)", key=f"w_{job['id']}")
-                if st.button("Start Job", key=f"st_{job['id']}", use_container_width=True):
-                    if worker:
-                        conn.table(DB_TABLE).update({"status": "In-Progress", "machine_id": res, "operator_name": worker}).eq("id", job['id']).execute(); st.rerun()
-                    else: st.warning("Enter worker name.")
-            else:
-                st.write(f"Working at **{job['machine_id']}** by **{job['operator_name']}**")
+                c1, c2, c3 = st.columns([1, 1, 1])
+                m_id = c1.selectbox("Select Machine/Bay", resource_list, key=f"m_{job['id']}")
+                l_type = c2.radio("Labor Type", ["Regular", "Temporary"], key=f"lt_{job['id']}")
+                
+                if l_type == "Regular":
+                    o_name = c3.selectbox("Select Operator", operator_list, key=f"op_{job['id']}")
+                else:
+                    o_name = c3.text_input("Enter Temp Name", key=f"opt_{job['id']}")
+                
+                if st.button("🚀 Start Production", key=f"btn_{job['id']}", use_container_width=True):
+                    if o_name:
+                        conn.table("fabrication_logs").update({
+                            "status": "In-Progress", "machine_id": m_id, "operator_name": o_name
+                        }).eq("id", job['id']).execute(); st.rerun()
+            
+            elif job['status'] == "In-Progress":
+                st.warning(f"Working at: {job['machine_id']} | Assigned to: {job['operator_name']}")
                 dr = st.text_input("Delay Reason (Optional)", value=job['delay_reason'] or "", key=f"dr_{job['id']}")
-                if st.button("Complete Job", key=f"f_{job['id']}", use_container_width=True):
-                    conn.table(DB_TABLE).update({"status": "Finished", "delay_reason": dr}).eq("id", job['id']).execute(); st.rerun()
+                if st.button("🏁 Mark Finished", key=f"f_{job['id']}", use_container_width=True):
+                    conn.table("fabrication_logs").update({"status": "Finished", "delay_reason": dr}).eq("id", job['id']).execute(); st.rerun()
 
-# --- TAB 3: ANALYTICS ---
+# --- TAB 3: LIVE SUMMARY TABLE ---
 with tabs[2]:
-    import pandas as pd
-    if df_data:
-        df = pd.DataFrame(df_data)
-        st.subheader("Live Status Overview")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Pending", len(df[df['status'] == "Pending"]))
-        c2.metric("In-Progress", len(df[df['status'] == "In-Progress"]))
-        c3.metric("Finished Today", len(df[df['status'] == "Finished"]))
-        st.dataframe(df[["job_code", "part_name", "status", "machine_id", "operator_name", "delay_reason"]], use_container_width=True)
+    if not df_main.empty:
+        st.subheader("Current Production Status")
+        # Showing only the requested columns
+        display_cols = ["job_code", "unit_no", "part_name", "activity_type", "status", "machine_id", "operator_name", "request_date", "required_date", "priority"]
+        st.dataframe(df_main[display_cols], use_container_width=True, hide_index=True)
+    else:
+        st.info("No records found.")
 
-# --- TAB 4: MASTERS ---
+# --- TAB 4: MASTER REGISTRY ---
 with tabs[3]:
-    st.header(f"Manage {RES_LABEL}s")
-    new_res = st.text_input(f"Add New {RES_LABEL}")
-    if st.button(f"Save {RES_LABEL}"):
-        conn.table(MASTER_TABLE).insert({MASTER_COL: new_res}).execute(); st.rerun()
-    st.write("Current List:", resource_list)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("Add Machine/Bay")
+        new_res = st.text_input("Bay Name")
+        if st.button("Save Bay"):
+            conn.table("fab_resource_master").insert({"res_name": new_res}).execute(); st.rerun()
+        st.write(resource_list)
+    with c2:
+        st.subheader("Add Regular Operator")
+        new_op = st.text_input("Operator Name")
+        if st.button("Save Operator"):
+            conn.table("fab_operator_master").insert({"op_name": new_op}).execute(); st.rerun()
+        st.write(operator_list)
