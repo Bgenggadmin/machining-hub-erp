@@ -1,13 +1,12 @@
 import streamlit as st
 from st_supabase_connection import SupabaseConnection
 import pandas as pd
-import plotly.express as px
 
 # 1. Setup & Connection
 st.set_page_config(page_title="B&G Enterprise Hub", layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- HUB SELECTION (TOP LEVEL) ---
+# --- HUB SELECTION ---
 if 'hub' not in st.session_state:
     st.session_state.hub = "Machining Hub"
 
@@ -52,7 +51,7 @@ all_logs, resource_list, operator_list, vendor_list = fetch_data()
 
 # 3. Application Tabs
 t_prod, t_inch, t_exec, t_masters = st.tabs([
-    "📝 Request & Live", "👨‍💻 Incharge Desk", "📊 Executive Analysis", "🛠️ Masters"
+    "📝 Request & Live", "👨‍💻 Incharge Desk", "📋 Executive Analysis", "🛠️ Masters"
 ])
 
 # --- TAB 1: PRODUCTION REQUEST & STATUS ---
@@ -79,52 +78,72 @@ with t_prod:
     if all_logs:
         df = pd.DataFrame(all_logs)
         active_df = df[df['status'] != "Finished"]
-        st.dataframe(active_df[['unit_no', 'job_code', 'part_name', 'status', 'priority']], use_container_width=True)
+        st.dataframe(active_df[['unit_no', 'job_code', 'part_name', 'status', 'priority']], use_container_width=True, hide_index=True)
 
-# --- TAB 2: INCHARGE DESK (ALLOCATION) ---
+# --- TAB 2: INCHARGE DESK (ALLOCATION - NO PASSWORD) ---
 with t_inch:
-    pin = st.text_input("Incharge PIN", type="password")
-    if pin == "1234":
-        pending_jobs = [j for j in all_logs if j['status'] not in ["Finished"]]
-        for job in pending_jobs:
-            with st.expander(f"Unit {job['unit_no']} | Job: {job['job_code']} ({job['status']})"):
-                mode = st.radio("Allot To:", ["Own Team", "Contractor"], key=f"m_{job['id']}", horizontal=True)
-                ca, cb = st.columns(2)
-                m_st = ca.selectbox(f"Assign {RES_LABEL}", resource_list, key=f"s_{job['id']}")
-                person = cb.selectbox("Assign Person/Agency", operator_list if mode=="Own Team" else vendor_list, key=f"p_{job['id']}")
-                
-                c_act1, c_act2 = st.columns(2)
-                if c_act1.button("🚀 Start Work", key=f"go_{job['id']}"):
-                    status_val = "In-House" if mode == "Own Team" else "Outsourced"
-                    update_data = {"status": status_val, "machine_id": m_st}
-                    if mode == "Own Team": update_data["operator_id"] = person
-                    else: update_data["vendor_id"] = person
-                    conn.table(DB_TABLE).update(update_data).eq("id", job['id']).execute()
+    st.subheader(f"🎯 Allocation Desk: {st.session_state.hub}")
+    pending_jobs = [j for j in all_logs if j['status'] not in ["Finished"]]
+    
+    if not pending_jobs:
+        st.info("No jobs awaiting allocation.")
+    
+    for job in pending_jobs:
+        with st.expander(f"Unit {job['unit_no']} | Job: {job['job_code']} ({job['status']})"):
+            mode = st.radio("Allot To:", ["Own Team", "Contractor"], key=f"m_{job['id']}", horizontal=True)
+            ca, cb = st.columns(2)
+            m_st = ca.selectbox(f"Assign {RES_LABEL}", resource_list, key=f"s_{job['id']}")
+            person = cb.selectbox("Assign Person/Agency", operator_list if mode=="Own Team" else vendor_list, key=f"p_{job['id']}")
+            
+            c_act1, c_act2 = st.columns(2)
+            if c_act1.button("🚀 Start Work", key=f"go_{job['id']}", use_container_width=True):
+                status_val = "In-House" if mode == "Own Team" else "Outsourced"
+                update_data = {"status": status_val, "machine_id": m_st}
+                if mode == "Own Team": update_data["operator_id"] = person
+                else: update_data["vendor_id"] = person
+                conn.table(DB_TABLE).update(update_data).eq("id", job['id']).execute()
+                st.rerun()
+            
+            if job['status'] in ["In-House", "Outsourced"]:
+                if c_act2.button("🏁 Mark Finished", key=f"fin_{job['id']}", use_container_width=True):
+                    conn.table(DB_TABLE).update({"status": "Finished"}).eq("id", job['id']).execute()
                     st.rerun()
-                
-                if job['status'] in ["In-House", "Outsourced"]:
-                    if c_act2.button("🏁 Mark Finished", key=f"fin_{job['id']}"):
-                        conn.table(DB_TABLE).update({"status": "Finished"}).eq("id", job['id']).execute()
-                        st.rerun()
 
-# --- TAB 3: EXECUTIVE ANALYSIS ---
+# --- TAB 3: EXECUTIVE ANALYSIS (TABLE FORM) ---
 with t_exec:
-    st.subheader(f"📈 {st.session_state.hub} Insights")
+    st.subheader(f"🧐 {st.session_state.hub} Analysis")
     if all_logs:
         df_exec = pd.DataFrame(all_logs)
-        c1, c2 = st.columns(2)
         
-        # Chart 1: Status Distribution
-        fig_status = px.pie(df_exec, names='status', title='Overall Job Status', hole=0.4)
-        c1.plotly_chart(fig_status, use_container_width=True)
+        # 1. Urgent & High Priority Action List
+        st.markdown("#### 🚨 Urgent & High Priority Action List")
+        urgent_df = df_exec[(df_exec['priority'].isin(['URGENT', 'High'])) & (df_exec['status'] != 'Finished')]
+        st.dataframe(urgent_df[['job_code', 'part_name', 'priority', 'status', 'unit_no']], use_container_width=True, hide_index=True)
         
-        # Chart 2: Priority Load
-        fig_pri = px.bar(df_exec, x='priority', color='status', title='Jobs by Priority')
-        c2.plotly_chart(fig_pri, use_container_width=True)
+        # 2. Vendor Tracker (Internal Contractor Load)
+        st.markdown("#### 🤝 Vendor / Contractor Tracker")
+        vendor_df = df_exec[df_exec['status'] == 'Outsourced']
+        if not vendor_df.empty:
+            vendor_summary = vendor_df.groupby('vendor_id').size().reset_index(name='Active Jobs')
+            st.table(vendor_summary)
+        else:
+            st.write("No active contractor jobs.")
+            
+        # 3. Export Reports
+        st.markdown("#### 📥 Export Reports")
+        csv = df_exec.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label=f"Download All {st.session_state.hub} Records (CSV)",
+            data=csv,
+            file_name=f"{st.session_state.hub.lower()}_report.csv",
+            mime='text/csv',
+        )
+    else:
+        st.write("No data available for analysis.")
 
 # --- TAB 4: MASTER MANAGEMENT ---
 with t_masters:
-    st.subheader(f"🛠️ Manage {st.session_state.hub} Resources")
+    st.subheader(f"🛠️ Master Records: {st.session_state.hub}")
     m_col1, m_col2 = st.columns(2)
     
     with m_col1:
