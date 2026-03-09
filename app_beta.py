@@ -42,9 +42,9 @@ def get_all_data():
         logs = conn.table(DB_TABLE).select("*").order("created_at", desc=True).execute().data or []
         
         df = pd.DataFrame(logs)
-        required_cols = ['id', 'status', 'job_code', 'part_name', 'priority', 'required_date', 'unit_no',
+        required_cols = ['id', 'status', 'job_code', 'part_name', 'priority', 'required_date', 'request_date', 'unit_no',
                          'machine_id', 'operator_id', 'vendor_id', 'vehicle_no', 'gatepass_no', 'waybill_no',
-                         'delay_reason', 'intervention_note', 'special_notes']
+                         'delay_reason', 'intervention_note', 'special_notes', 'contractor_name']
         
         if df.empty:
             df = pd.DataFrame(columns=required_cols)
@@ -74,19 +74,24 @@ with tabs[0]:
         notes = st.text_area("Special Notes")
         if st.form_submit_button("Submit Request"):
             if j_code and part:
-                conn.table(DB_TABLE).insert({"unit_no": u_no, "job_code": j_code, "part_name": part, "activity_type": act, "required_date": str(req_d), "status": "Pending", "special_notes": notes}).execute(); st.rerun()
+                conn.table(DB_TABLE).insert({
+                    "unit_no": u_no, "job_code": j_code, "part_name": part, 
+                    "activity_type": act, "required_date": str(req_d), 
+                    "request_date": str(datetime.date.today()), # ADDED REQUEST DATE
+                    "status": "Pending", "priority": prio, "special_notes": notes
+                }).execute(); st.rerun()
 
     st.divider()
     st.subheader("🚦 Live Summary Table")
     if not df_main.empty:
-        # Calculate Days Left safely
         temp_df = df_main.copy()
         temp_df['required_date'] = pd.to_datetime(temp_df['required_date'], errors='coerce')
         today = pd.Timestamp(datetime.date.today())
         temp_df['Days Left'] = (temp_df['required_date'] - today).dt.days
         
         unit_filter = st.radio("Filter by Unit", [1, 2, 3], horizontal=True)
-        summary_cols = ['job_code', 'part_name', 'status', 'priority', 'required_date', 'Days Left', 'special_notes']
+        # ADDED REQUEST DATE TO SUMMARY
+        summary_cols = ['job_code', 'part_name', 'status', 'priority', 'request_date', 'required_date', 'Days Left', 'special_notes']
         st.dataframe(temp_df[temp_df['unit_no'] == unit_filter][summary_cols], use_container_width=True, hide_index=True)
 
 # --- TAB 2: INCHARGE ENTRY DESK ---
@@ -96,28 +101,43 @@ with tabs[1]:
         st.info("No active jobs currently.")
     for job in active_jobs:
         with st.expander(f"📌 {job['job_code']} | {job['part_name']} | Unit {job['unit_no']} ({job['status']})"):
+            # RESTORED REQUEST INFO & PRODUCTION NOTES
+            st.info(f"📅 **Req. Date:** {job['required_date']} | **Posted:** {job['request_date']} | 📝 **Notes:** {job['special_notes']}")
+            
             c_del, c_int = st.columns(2)
             d_r = c_del.text_input("Delay Reason", value=job['delay_reason'] or '', key=f"dr_{job['id']}")
             i_n = c_int.text_area("Incharge Note", value=job['intervention_note'] or '', key=f"in_{job['id']}")
             
             if job['status'] == "Pending":
-                mode = st.radio("Allotment", ["In-House", "Outsource"], key=f"m_{job['id']}", horizontal=True)
+                # LOGIC SWITCH FOR BUFFING VS MACHINING
+                outsource_label = "Contract Manpower" if st.session_state.hub == "Buffing Hub" else "Outsource"
+                mode = st.radio("Allotment", ["In-House", outsource_label], key=f"m_{job['id']}", horizontal=True)
+                
                 if mode == "In-House":
                     c1, c2 = st.columns(2)
                     m = c1.selectbox(f"Assign {RES_LABEL}", resource_list, key=f"m_sel_{job['id']}")
                     o = c2.selectbox("Assign Operator", operator_list, key=f"o_sel_{job['id']}")
                     if st.button("🚀 Start In-House", key=f"b_ih_{job['id']}", use_container_width=True):
                         conn.table(DB_TABLE).update({"status": "In-House", "machine_id": m, "operator_id": o, "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
-                else:
+                
+                elif mode == "Contract Manpower": # BUFFING SPECIFIC
+                    c1, c2 = st.columns(2)
+                    v_name = c1.selectbox("Contractor Agency", vendor_list, key=f"v_buff_{job['id']}")
+                    c_name = c2.text_input("Specific Worker Name", key=f"worker_{job['id']}")
+                    if st.button("🤝 Assign Contractor", key=f"b_buff_{job['id']}", use_container_width=True):
+                        conn.table(DB_TABLE).update({"status": "Outsourced", "vendor_id": v_name, "contractor_name": c_name, "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
+                
+                else: # MACHINING OUTSOURCE
                     c1, c2, c3 = st.columns(3)
                     v = c1.selectbox("Vendor", vendor_list, key=f"v_sel_{job['id']}")
                     vh = c2.selectbox("Vehicle", vehicle_list, key=f"vh_sel_{job['id']}")
                     gp = c3.text_input("Gatepass No", key=f"gp_{job['id']}")
-                    if st.button("🚚 Dispatch to Vendor", key=f"b_os_{job['id']}", use_container_width=True):
+                    if st.button("🚚 Dispatch Outward", key=f"b_os_{job['id']}", use_container_width=True):
                         conn.table(DB_TABLE).update({"status": "Outsourced", "vendor_id": v, "vehicle_no": vh, "gatepass_no": gp, "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
+            
             elif job['status'] == "Outsourced":
-                wb = st.text_input("Return Waybill No", key=f"wb_{job['id']}")
-                if st.button("✅ Mark Received", key=f"b_rc_{job['id']}", use_container_width=True):
+                wb = st.text_input("Return Waybill / DC No", key=f"wb_{job['id']}")
+                if st.button("✅ Mark Received & Finished", key=f"b_rc_{job['id']}", use_container_width=True):
                     conn.table(DB_TABLE).update({"status": "Finished", "waybill_no": wb, "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
             else:
                 if st.button("🏁 Mark Finished", key=f"b_fi_{job['id']}", use_container_width=True):
@@ -127,16 +147,7 @@ with tabs[1]:
 with tabs[2]:
     if not df_main.empty:
         st.write("### 🌍 Shop Floor Overview")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write(f"**Current {RES_LABEL} Load**")
-            st.dataframe(df_main[df_main['status'] == 'In-House'][['job_code', 'machine_id', 'operator_id', 'priority', 'delay_reason']], use_container_width=True, hide_index=True)
-        with c2:
-            st.write("**Vendor Logistics Tracking**")
-            st.dataframe(df_main[df_main['status'] == 'Outsourced'][['job_code', 'vendor_id', 'vehicle_no', 'gatepass_no', 'required_date']], use_container_width=True, hide_index=True)
-        st.divider()
-        st.write("**Full Logbook**")
-        st.dataframe(df_main, use_container_width=True)
+        st.dataframe(df_main, use_container_width=True, hide_index=True)
 
 # --- TAB 4: MASTERS ---
 with tabs[3]:
