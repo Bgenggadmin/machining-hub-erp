@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 
 # 1. Setup
-st.set_page_config(page_title="B&G Enterprise ERP", layout="wide")
+st.set_page_config(page_title="B&G Enterprise Hub", layout="wide")
 conn = st.connection("supabase", type=SupabaseConnection)
 
 if 'hub' not in st.session_state:
@@ -42,33 +42,45 @@ all_logs, resource_list, operator_list, vendor_list = fetch_data()
 
 t_prod, t_inch, t_exec, t_masters = st.tabs(["📝 Request & Live", "👨‍💻 Incharge Desk", "📋 Executive Analysis", "🛠️ Masters"])
 
-# --- TAB 1: PRODUCTION ---
+# --- TAB 1: PRODUCTION (FIXED TO SHOW DATES) ---
 with t_prod:
     with st.form(key=f"f_{st.session_state.hub}", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
         u_no, j_code = col1.selectbox("Unit", [1, 2, 3]), col1.text_input("Job Code")
         part, act = col2.text_input("Part Name"), col2.selectbox("Process", ACTIVITY_LIST)
-        r_date, prio = col3.date_input("Required Date"), col3.selectbox("Priority", ["Low", "Medium", "High", "URGENT"])
+        r_date, prio = col3.date_input("Required Delivery Date"), col3.selectbox("Priority", ["Low", "Medium", "High", "URGENT"])
         if st.form_submit_button("Submit"):
             if j_code:
-                conn.table(DB_TABLE).insert({"unit_no": u_no, "job_code": j_code, "part_name": part, "activity_type": act, "priority": prio, "status": "Pending", "request_date": str(datetime.now().date()), "required_date": str(r_date)}).execute()
+                conn.table(DB_TABLE).insert({
+                    "unit_no": u_no, "job_code": j_code, "part_name": part, 
+                    "activity_type": act, "priority": prio, "status": "Pending", 
+                    "request_date": str(datetime.now().date()), 
+                    "required_date": str(r_date)
+                }).execute()
                 st.rerun()
 
     st.subheader("🚦 Shop Floor Status")
     if all_logs:
         df = pd.DataFrame(all_logs)
         df_live = df[df['status'] != "Finished"].copy()
-        if not df_live.empty and 'required_date' in df_live.columns:
+        if not df_live.empty:
+            # Calculation for display
             df_live['required_date'] = pd.to_datetime(df_live['required_date'])
-            df_live['Days Left'] = (df_live['required_date'] - pd.Timestamp(datetime.now().date())).dt.days
-            st.dataframe(df_live[['unit_no', 'job_code', 'part_name', 'status', 'Days Left', 'priority']], use_container_width=True, hide_index=True)
-        else: st.info("No active jobs or missing date columns.")
+            today = pd.Timestamp(datetime.now().date())
+            df_live['Days Left'] = (df_live['required_date'] - today).dt.days
+            
+            # --- SHOWING ALL DATE FIELDS HERE ---
+            st.dataframe(
+                df_live[['unit_no', 'job_code', 'part_name', 'request_date', 'required_date', 'Days Left', 'status', 'priority']], 
+                use_container_width=True, hide_index=True
+            )
+        else: st.info("No active jobs.")
 
 # --- TAB 2: INCHARGE ---
 with t_inch:
     pending = [j for j in all_logs if j['status'] != "Finished"]
     for j in pending:
-        with st.expander(f"Unit {j['unit_no']} | {j['job_code']} | {j['status']}"):
+        with st.expander(f"Unit {j['unit_no']} | {j['job_code']} | Req: {j.get('required_date', 'N/A')}"):
             m = st.radio("Type:", ["Own", "Contractor"], key=f"m{j['id']}", horizontal=True)
             c1, c2 = st.columns(2)
             r_sel = c1.selectbox(f"{RES_LABEL}", resource_list, key=f"r{j['id']}")
@@ -86,7 +98,7 @@ with t_inch:
                     conn.table(DB_TABLE).update({"status": "Finished"}).eq("id", j['id']).execute()
                     st.rerun()
 
-# --- TAB 3: EXECUTIVE (FIXED THE ERROR) ---
+# --- TAB 3: EXECUTIVE (SHOWING ALL DATES) ---
 with t_exec:
     if all_logs:
         df_e = pd.DataFrame(all_logs)
@@ -95,31 +107,19 @@ with t_exec:
         s2.metric("Active (WIP)", len(df_e[df_e['status'] != 'Finished']))
         s3.metric("Completed", len(df_e[df_e['status'] == 'Finished']))
         
+        st.markdown("#### 🚨 Delayed/Lagging Jobs")
         if 'required_date' in df_e.columns:
-            st.markdown("#### 🚨 Lagging Report")
             df_e['required_date'] = pd.to_datetime(df_e['required_date'])
             df_e['Lag'] = (pd.Timestamp(datetime.now().date()) - df_e['required_date']).dt.days
             lagging = df_e[(df_e['Lag'] > 0) & (df_e['status'] != 'Finished')]
             
-            # FIX: If lagging is empty, show a message instead of an empty table
             if not lagging.empty:
-                st.dataframe(lagging[['job_code', 'priority', 'Lag', 'unit_no']], use_container_width=True, hide_index=True)
+                # Showing exact dates in the lagging report
+                st.dataframe(lagging[['job_code', 'request_date', 'required_date', 'Lag', 'priority']], use_container_width=True, hide_index=True)
             else:
-                st.success("✅ All jobs are on track. No lagging detected.")
+                st.success("✅ No jobs are lagging.")
         
+        st.divider()
+        st.markdown("#### 📖 Full Department History")
+        st.dataframe(df_e, use_container_width=True, hide_index=True)
         st.download_button("📥 Export CSV", df_e.to_csv(index=False).encode('utf-8'), f"{st.session_state.hub}.csv")
-
-# --- TAB 4: MASTERS ---
-with t_masters:
-    col1, col2 = st.columns(2)
-    with col1:
-        new_res = st.text_input(f"New {RES_LABEL}")
-        if st.button(f"Add {RES_LABEL}"):
-            conn.table(RES_MASTER).insert({RES_COL: new_res}).execute(); st.rerun()
-    with col2:
-        m_type = st.selectbox("Staff Category", ["Operator", "Contractor"])
-        m_name = st.text_input("Name")
-        if st.button("Add Staff/Vendor"):
-            tbl = "beta_operator_master" if m_type=="Operator" else "beta_vendor_master"
-            col = "operator_name" if m_type=="Operator" else "vendor_name"
-            conn.table(tbl).insert({col: m_name}).execute(); st.rerun()
