@@ -97,9 +97,12 @@ with tabs[0]:
 
 # --- TAB 2: INCHARGE ENTRY DESK (LOGIC SEPARATION) ---
 with tabs[1]:
-        active_jobs = df_main[df_main['status'] != "Finished"].to_dict('records')
+    # Fixed indentation for data preparation
+    active_jobs = df_main[df_main['status'] != "Finished"].to_dict('records') if not df_main.empty else []
+    
     if not active_jobs:
         st.info("No active jobs currently.")
+    
     for job in active_jobs:
         with st.expander(f"📌 {job['job_code']} | {job['part_name']} | Unit {job['unit_no']} ({job['status']})"):
             # RELEVANT FIELD DISPLAY
@@ -118,14 +121,29 @@ with tabs[1]:
                     m = c1.selectbox(f"Assign {RES_LABEL}", resource_list, key=f"m_sel_{job['id']}")
                     o = c2.selectbox("Assign Operator", operator_list, key=f"o_sel_{job['id']}")
                     if st.button("🚀 Start In-House", key=f"b_ih_{job['id']}", use_container_width=True):
-                        conn.table(DB_TABLE).update({"status": "In-House", "machine_id": m, "operator_id": o, "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
+                        conn.table(DB_TABLE).update({
+                            "status": "In-House", 
+                            "machine_id": m, 
+                            "operator_id": o, 
+                            "delay_reason": d_r, 
+                            "intervention_note": i_n
+                        }).eq("id", job['id']).execute()
+                        st.rerun()
                 
                 elif mode == "Contract Manpower" and IS_BUFFING:
+                    # BUFFING SPECIFIC
                     c1, c2 = st.columns(2)
                     v_name = c1.selectbox("Contractor Agency", vendor_list, key=f"v_buff_{job['id']}")
                     c_name = c2.text_input("Specific Worker Name", key=f"worker_{job['id']}")
                     if st.button("🤝 Assign Contractor", key=f"b_buff_{job['id']}", use_container_width=True):
-                        conn.table(DB_TABLE).update({"status": "Outsourced", "vendor_id": v_name, "contractor_name": c_name, "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
+                        conn.table(DB_TABLE).update({
+                            "status": "Outsourced", 
+                            "vendor_id": v_name, 
+                            "contractor_name": c_name, 
+                            "delay_reason": d_r, 
+                            "intervention_note": i_n
+                        }).eq("id", job['id']).execute()
+                        st.rerun()
                 
                 else: # MACHINING OUTSOURCE
                     c1, c2, c3 = st.columns(3)
@@ -133,15 +151,35 @@ with tabs[1]:
                     vh = c2.selectbox("Vehicle", vehicle_list, key=f"vh_sel_{job['id']}")
                     gp = c3.text_input("Gatepass No", key=f"gp_{job['id']}")
                     if st.button("🚚 Dispatch Outward", key=f"b_os_{job['id']}", use_container_width=True):
-                        conn.table(DB_TABLE).update({"status": "Outsourced", "vendor_id": v, "vehicle_no": vh, "gatepass_no": gp, "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
+                        conn.table(DB_TABLE).update({
+                            "status": "Outsourced", 
+                            "vendor_id": v, 
+                            "vehicle_no": vh, 
+                            "gatepass_no": gp, 
+                            "delay_reason": d_r, 
+                            "intervention_note": i_n
+                        }).eq("id", job['id']).execute()
+                        st.rerun()
             
             elif job['status'] == "Outsourced":
                 wb = st.text_input("Return Waybill / DC No", key=f"wb_{job['id']}")
                 if st.button("✅ Mark Received & Finished", key=f"b_rc_{job['id']}", use_container_width=True):
-                    conn.table(DB_TABLE).update({"status": "Finished", "waybill_no": wb, "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
-            else:
+                    conn.table(DB_TABLE).update({
+                        "status": "Finished", 
+                        "waybill_no": wb, 
+                        "delay_reason": d_r, 
+                        "intervention_note": i_n
+                    }).eq("id", job['id']).execute()
+                    st.rerun()
+            
+            else: # In-House WIP
                 if st.button("🏁 Mark Finished", key=f"b_fi_{job['id']}", use_container_width=True):
-                    conn.table(DB_TABLE).update({"status": "Finished", "delay_reason": d_r, "intervention_note": i_n}).eq("id", job['id']).execute(); st.rerun()
+                    conn.table(DB_TABLE).update({
+                        "status": "Finished", 
+                        "delay_reason": d_r, 
+                        "intervention_note": i_n
+                    }).eq("id", job['id']).execute()
+                    st.rerun()
 
 # --- TAB 3: EXECUTIVE ANALYTICS (RELEVANT VIEW) ---
 with tabs[2]:
