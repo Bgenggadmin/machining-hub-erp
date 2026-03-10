@@ -40,7 +40,13 @@ def get_all_data():
         m_data = conn.table(MASTER_TABLE).select(MASTER_COL).execute().data or []
         o_data = conn.table(OP_MASTER).select("operator_name").execute().data or []
         v_data = conn.table(VN_MASTER).select("vendor_name").execute().data or []
-        vh_data = conn.table(VH_MASTER).select("vehicle_number").execute().data or []
+        
+        # FIX: Only fetch vehicle data if NOT in Buffing Hub
+        vh_list = []
+        if not IS_BUFFING:
+            vh_data = conn.table(VH_MASTER).select("vehicle_number").execute().data or []
+            vh_list = [vh['vehicle_number'] for vh in vh_data]
+
         logs = conn.table(DB_TABLE).select("*").order("created_at", desc=True).execute().data or []
         
         df = pd.DataFrame(logs)
@@ -56,7 +62,7 @@ def get_all_data():
                     df[col] = None
         
         return [r[MASTER_COL] for r in m_data], [o['operator_name'] for o in o_data], \
-               [v['vendor_name'] for v in v_data], [vh['vehicle_number'] for vh in v_data], df
+               [v['vendor_name'] for v in v_data], vh_list, df
     except Exception as e:
         st.error(f"Data Sync Error: {e}")
         return [], [], [], [], pd.DataFrame()
@@ -88,12 +94,11 @@ with tabs[0]:
     if not df_main.empty:
         temp_df = df_main.copy()
         
-        # LOGIC: Convert to datetime, calculate math, then format as clean strings
+        # DATE FORMATTING RECTIFICATION
         temp_df['required_date_dt'] = pd.to_datetime(temp_df['required_date'], errors='coerce')
         today = pd.Timestamp(datetime.date.today())
         temp_df['Days Left'] = (temp_df['required_date_dt'] - today).dt.days
         
-        # Formatting for display
         temp_df['required_date'] = temp_df['required_date_dt'].dt.strftime('%d-%m-%Y')
         temp_df['request_date'] = pd.to_datetime(temp_df['request_date'], errors='coerce').dt.strftime('%d-%m-%Y')
         
@@ -109,7 +114,7 @@ with tabs[1]:
         st.info("No active jobs currently.")
     
     for job in active_jobs:
-        # LOGIC: Clean the date strings inside the expanders
+        # CLEAN DATE DISPLAY IN EXPANDER
         disp_req = pd.to_datetime(job['required_date']).strftime('%d-%m-%Y') if job['required_date'] else "N/A"
         disp_posted = pd.to_datetime(job['request_date']).strftime('%d-%m-%Y') if job['request_date'] else "N/A"
 
@@ -144,7 +149,7 @@ with tabs[1]:
                             "delay_reason": d_r, "intervention_note": i_n
                         }).eq("id", job['id']).execute(); st.rerun()
                 
-                else:
+                else: # MACHINING OUTSOURCE (Logistics Kept)
                     c1, c2, c3 = st.columns(3)
                     v = c1.selectbox("Vendor", vendor_list, key=f"v_sel_{job['id']}")
                     vh = c2.selectbox("Vehicle", vehicle_list, key=f"vh_sel_{job['id']}")
@@ -174,7 +179,7 @@ with tabs[2]:
         st.write(f"### 🌍 {st.session_state.hub} Shop Floor Overview")
         cols = ['job_code', 'part_name', 'status', 'priority', 'request_date', 'required_date']
         if IS_BUFFING:
-            cols += ['vendor_id', 'contractor_name']
+            cols += ['vendor_id', 'contractor_name'] # Removed Vehicle/Gatepass
         else:
             cols += ['machine_id', 'operator_id', 'vendor_id', 'vehicle_no', 'gatepass_no']
         
@@ -183,10 +188,14 @@ with tabs[2]:
 # --- TAB 4: MASTERS ---
 with tabs[3]:
     st.markdown("### 🛠️ System Master Registry")
-    cmap = {MASTER_TABLE: MASTER_COL, OP_MASTER: "operator_name", VN_MASTER: "vendor_name", VH_MASTER: "vehicle_number"}
+    
+    # Removed Vehicle Master from Registry options if Buffing
+    master_options = {MASTER_TABLE: MASTER_COL, OP_MASTER: "operator_name", VN_MASTER: "vendor_name"}
+    if not IS_BUFFING:
+        master_options[VH_MASTER] = "vehicle_number"
     
     selected_cat = st.segmented_control(
-        "Choose Registry to Manage", options=list(cmap.keys()),
+        "Choose Registry to Manage", options=list(master_options.keys()),
         format_func=lambda x: x.replace('_', ' ').replace('beta ', '').title(),
         default=MASTER_TABLE
     )
@@ -200,28 +209,20 @@ with tabs[3]:
             res = conn.table(selected_cat).select("*").execute().data
             if res:
                 master_df = pd.DataFrame(res)
-                search_term = st.text_input("🔍 Search entries...", placeholder="Type to filter list...")
-                display_col = cmap[selected_cat]
+                search_term = st.text_input("🔍 Search entries...", key="master_search")
+                display_col = master_options[selected_cat]
                 if search_term:
                     master_df = master_df[master_df[display_col].str.contains(search_term, case=False, na=False)]
                 st.dataframe(master_df[[display_col]], use_container_width=True, hide_index=True, height=350)
-                st.caption(f"Total Records: {len(master_df)}")
-            else:
-                st.warning("No records found.")
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error loading registry: {e}")
 
     with col_add:
         st.subheader("➕ Quick Add")
         with st.container(border=True):
-            field_name = cmap[selected_cat].replace('_', ' ').title()
+            field_name = master_options[selected_cat].replace('_', ' ').title()
             new_val = st.text_input(f"New {field_name}")
             if st.button("Register Entry", use_container_width=True, type="primary"):
                 if new_val.strip():
-                    try:
-                        conn.table(selected_cat).insert({cmap[selected_cat]: new_val.strip()}).execute()
-                        st.success(f"Registered: {new_val}"); st.rerun()
-                    except:
-                        st.error("Duplicate or invalid entry.")
-                else:
-                    st.error("Entry cannot be empty.")
+                    conn.table(selected_cat).insert({master_options[selected_cat]: new_val.strip()}).execute()
+                    st.success(f"Registered: {new_val}"); st.rerun()
