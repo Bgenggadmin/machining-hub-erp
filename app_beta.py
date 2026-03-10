@@ -56,7 +56,7 @@ def get_all_data():
                     df[col] = None
         
         return [r[MASTER_COL] for r in m_data], [o['operator_name'] for o in o_data], \
-               [v['vendor_name'] for v in v_data], [vh['vehicle_number'] for vh in vh_data], df
+               [v['vendor_name'] for v in v_data], [vh['vehicle_number'] for vh in v_data], df
     except Exception as e:
         st.error(f"Data Sync Error: {e}")
         return [], [], [], [], pd.DataFrame()
@@ -87,26 +87,34 @@ with tabs[0]:
     st.subheader("🚦 Live Summary Table")
     if not df_main.empty:
         temp_df = df_main.copy()
-        temp_df['required_date'] = pd.to_datetime(temp_df['required_date'], errors='coerce')
+        
+        # LOGIC: Convert to datetime, calculate math, then format as clean strings
+        temp_df['required_date_dt'] = pd.to_datetime(temp_df['required_date'], errors='coerce')
         today = pd.Timestamp(datetime.date.today())
-        temp_df['Days Left'] = (temp_df['required_date'] - today).dt.days
+        temp_df['Days Left'] = (temp_df['required_date_dt'] - today).dt.days
+        
+        # Formatting for display
+        temp_df['required_date'] = temp_df['required_date_dt'].dt.strftime('%d-%m-%Y')
+        temp_df['request_date'] = pd.to_datetime(temp_df['request_date'], errors='coerce').dt.strftime('%d-%m-%Y')
         
         unit_filter = st.radio("Filter by Unit", [1, 2, 3], horizontal=True, key="unit_summary_filter")
         summary_cols = ['job_code', 'part_name', 'status', 'priority', 'request_date', 'required_date', 'Days Left', 'special_notes']
         st.dataframe(temp_df[temp_df['unit_no'] == unit_filter][summary_cols], use_container_width=True, hide_index=True)
 
-# --- TAB 2: INCHARGE ENTRY DESK (LOGIC SEPARATION) ---
+# --- TAB 2: INCHARGE ENTRY DESK ---
 with tabs[1]:
-    # Fixed indentation for data preparation
     active_jobs = df_main[df_main['status'] != "Finished"].to_dict('records') if not df_main.empty else []
     
     if not active_jobs:
         st.info("No active jobs currently.")
     
     for job in active_jobs:
+        # LOGIC: Clean the date strings inside the expanders
+        disp_req = pd.to_datetime(job['required_date']).strftime('%d-%m-%Y') if job['required_date'] else "N/A"
+        disp_posted = pd.to_datetime(job['request_date']).strftime('%d-%m-%Y') if job['request_date'] else "N/A"
+
         with st.expander(f"📌 {job['job_code']} | {job['part_name']} | Unit {job['unit_no']} ({job['status']})"):
-            # RELEVANT FIELD DISPLAY
-            st.info(f"📅 **Req. Date:** {job['required_date']} | **Posted:** {job['request_date']} | 📝 **Notes:** {job['special_notes']}")
+            st.info(f"📅 **Req. Date:** {disp_req} | **Posted:** {disp_posted} | 📝 **Notes:** {job['special_notes']}")
             
             c_del, c_int = st.columns(2)
             d_r = c_del.text_input("Delay Reason", value=job['delay_reason'] or '', key=f"dr_{job['id']}")
@@ -122,70 +130,48 @@ with tabs[1]:
                     o = c2.selectbox("Assign Operator", operator_list, key=f"o_sel_{job['id']}")
                     if st.button("🚀 Start In-House", key=f"b_ih_{job['id']}", use_container_width=True):
                         conn.table(DB_TABLE).update({
-                            "status": "In-House", 
-                            "machine_id": m, 
-                            "operator_id": o, 
-                            "delay_reason": d_r, 
-                            "intervention_note": i_n
-                        }).eq("id", job['id']).execute()
-                        st.rerun()
+                            "status": "In-House", "machine_id": m, "operator_id": o, 
+                            "delay_reason": d_r, "intervention_note": i_n
+                        }).eq("id", job['id']).execute(); st.rerun()
                 
                 elif mode == "Contract Manpower" and IS_BUFFING:
-                    # BUFFING SPECIFIC
                     c1, c2 = st.columns(2)
                     v_name = c1.selectbox("Contractor Agency", vendor_list, key=f"v_buff_{job['id']}")
                     c_name = c2.text_input("Specific Worker Name", key=f"worker_{job['id']}")
                     if st.button("🤝 Assign Contractor", key=f"b_buff_{job['id']}", use_container_width=True):
                         conn.table(DB_TABLE).update({
-                            "status": "Outsourced", 
-                            "vendor_id": v_name, 
-                            "contractor_name": c_name, 
-                            "delay_reason": d_r, 
-                            "intervention_note": i_n
-                        }).eq("id", job['id']).execute()
-                        st.rerun()
+                            "status": "Outsourced", "vendor_id": v_name, "contractor_name": c_name, 
+                            "delay_reason": d_r, "intervention_note": i_n
+                        }).eq("id", job['id']).execute(); st.rerun()
                 
-                else: # MACHINING OUTSOURCE
+                else:
                     c1, c2, c3 = st.columns(3)
                     v = c1.selectbox("Vendor", vendor_list, key=f"v_sel_{job['id']}")
                     vh = c2.selectbox("Vehicle", vehicle_list, key=f"vh_sel_{job['id']}")
                     gp = c3.text_input("Gatepass No", key=f"gp_{job['id']}")
                     if st.button("🚚 Dispatch Outward", key=f"b_os_{job['id']}", use_container_width=True):
                         conn.table(DB_TABLE).update({
-                            "status": "Outsourced", 
-                            "vendor_id": v, 
-                            "vehicle_no": vh, 
-                            "gatepass_no": gp, 
-                            "delay_reason": d_r, 
-                            "intervention_note": i_n
-                        }).eq("id", job['id']).execute()
-                        st.rerun()
+                            "status": "Outsourced", "vendor_id": v, "vehicle_no": vh, 
+                            "gatepass_no": gp, "delay_reason": d_r, "intervention_note": i_n
+                        }).eq("id", job['id']).execute(); st.rerun()
             
             elif job['status'] == "Outsourced":
                 wb = st.text_input("Return Waybill / DC No", key=f"wb_{job['id']}")
                 if st.button("✅ Mark Received & Finished", key=f"b_rc_{job['id']}", use_container_width=True):
                     conn.table(DB_TABLE).update({
-                        "status": "Finished", 
-                        "waybill_no": wb, 
-                        "delay_reason": d_r, 
-                        "intervention_note": i_n
-                    }).eq("id", job['id']).execute()
-                    st.rerun()
+                        "status": "Finished", "waybill_no": wb, "delay_reason": d_r, "intervention_note": i_n
+                    }).eq("id", job['id']).execute(); st.rerun()
             
-            else: # In-House WIP
+            else:
                 if st.button("🏁 Mark Finished", key=f"b_fi_{job['id']}", use_container_width=True):
                     conn.table(DB_TABLE).update({
-                        "status": "Finished", 
-                        "delay_reason": d_r, 
-                        "intervention_note": i_n
-                    }).eq("id", job['id']).execute()
-                    st.rerun()
+                        "status": "Finished", "delay_reason": d_r, "intervention_note": i_n
+                    }).eq("id", job['id']).execute(); st.rerun()
 
-# --- TAB 3: EXECUTIVE ANALYTICS (RELEVANT VIEW) ---
+# --- TAB 3: EXECUTIVE ANALYTICS ---
 with tabs[2]:
     if not df_main.empty:
         st.write(f"### 🌍 {st.session_state.hub} Shop Floor Overview")
-        # Show specific columns based on hub to keep it clean
         cols = ['job_code', 'part_name', 'status', 'priority', 'request_date', 'required_date']
         if IS_BUFFING:
             cols += ['vendor_id', 'contractor_name']
@@ -194,73 +180,47 @@ with tabs[2]:
         
         st.dataframe(df_main[cols], use_container_width=True, hide_index=True)
 
-# --- TAB 4: MASTERS (USER-FRIENDLY DASHBOARD) ---
+# --- TAB 4: MASTERS ---
 with tabs[3]:
     st.markdown("### 🛠️ System Master Registry")
-    st.info("Select a category below to view, search, or add new system records.")
-
-    # 1. Configuration & Clean Mapping
-    # This ensures users see 'Vendor Master' instead of 'vendor_master'
-    cmap = {
-        MASTER_TABLE: MASTER_COL, 
-        OP_MASTER: "operator_name", 
-        VN_MASTER: "vendor_name", 
-        VH_MASTER: "vehicle_number"
-    }
+    cmap = {MASTER_TABLE: MASTER_COL, OP_MASTER: "operator_name", VN_MASTER: "vendor_name", VH_MASTER: "vehicle_number"}
     
-    # 2. Category Selection with Clean Labels
     selected_cat = st.segmented_control(
-        "Choose Registry to Manage", 
-        options=list(cmap.keys()),
+        "Choose Registry to Manage", options=list(cmap.keys()),
         format_func=lambda x: x.replace('_', ' ').replace('beta ', '').title(),
         default=MASTER_TABLE
     )
 
     st.divider()
-
-    # 3. Two-Column Workspace
     col_view, col_add = st.columns([2, 1], gap="large")
 
     with col_view:
         st.subheader(f"📋 Current {selected_cat.replace('_', ' ').title()}")
         try:
-            # Fetch data
             res = conn.table(selected_cat).select("*").execute().data
             if res:
                 master_df = pd.DataFrame(res)
-                
-                # Search bar for existing records
                 search_term = st.text_input("🔍 Search entries...", placeholder="Type to filter list...")
-                
                 display_col = cmap[selected_cat]
                 if search_term:
                     master_df = master_df[master_df[display_col].str.contains(search_term, case=False, na=False)]
-                
-                # Display high-quality table
-                st.dataframe(
-                    master_df[[display_col]], 
-                    use_container_width=True, 
-                    hide_index=True,
-                    height=350
-                )
+                st.dataframe(master_df[[display_col]], use_container_width=True, hide_index=True, height=350)
                 st.caption(f"Total Records: {len(master_df)}")
             else:
-                st.warning("No records found in this category.")
+                st.warning("No records found.")
         except Exception as e:
-            st.error(f"Could not load data: {e}")
+            st.error(f"Error: {e}")
 
     with col_add:
         st.subheader("➕ Quick Add")
         with st.container(border=True):
             field_name = cmap[selected_cat].replace('_', ' ').title()
             new_val = st.text_input(f"New {field_name}")
-            
             if st.button("Register Entry", use_container_width=True, type="primary"):
                 if new_val.strip():
                     try:
                         conn.table(selected_cat).insert({cmap[selected_cat]: new_val.strip()}).execute()
-                        st.success(f"Registered: {new_val}")
-                        st.rerun()
+                        st.success(f"Registered: {new_val}"); st.rerun()
                     except:
                         st.error("Duplicate or invalid entry.")
                 else:
